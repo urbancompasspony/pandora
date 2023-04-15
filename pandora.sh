@@ -45,7 +45,8 @@ function init {
   echo "We found "$lres" IPs to analyze." | tee -a "$tolog"
 
   # Do RUNA jobs at time!
-  cat "$toip" | parallel -j "$RUNA" -k "nmap -Pn --script vuln {} | tee -a $pathtest/$name/{}"
+  # Exclude 9100 because of printers!
+  cat "$toip" | parallel -j "$RUNA" -k "nmap -Pn --script vuln -p -9099,9101- {} | tee -a $pathtest/$name/{}"
 
   # When finished
   datetime2=$(date +"%d/%m/%y %H:%M")
