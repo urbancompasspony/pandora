@@ -46,7 +46,7 @@ function init {
 
   # Do RUNA jobs at time!
   # Exclude 9100 because of printers!
-  cat "$toip" | parallel -j "$RUNA" -k "nmap -Pn --script vuln -p -9099,9101- {} | tee -a $pathtest/$name/{}"
+  cat "$toip" | parallel -j "$RUNA" -k "nmap -Pn --script vuln -p -9099,9101- --exclude-ports 9100 {} | tee -a $pathtest/$name/{}"
 
   # When finished
   datetime2=$(date +"%d/%m/%y %H:%M")
