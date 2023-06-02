@@ -1,4 +1,5 @@
-FROM ubuntu:22.04
+FROM ubuntu:23.04
+# Remove this line plz! Keep distro-upgraded because of NMAP Version. Latest: 7.94
 MAINTAINER UrbanCompassPony <urbancompasspony@NOSPAM.NO>
 
 ENV DEBIAN_FRONTEND noninteractive
