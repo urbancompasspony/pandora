@@ -10,3 +10,17 @@ docker login registry.gitlab.com
 docker build -t registry.gitlab.com/docker329/pentest .
 
 docker push registry.gitlab.com/docker329/pentest
+
+## On Android - SSH Button
+
+Set DateTime
+
+echo "aaa" | sudo -S systemctl restart systemd-timesyncd.service
+
+Start Pentesting:
+
+docker exec pentest-host bash ./pandora.sh &
+
+Shutdown
+
+echo "aaa" | sudo -S shutdown -h now
