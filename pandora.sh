@@ -124,7 +124,7 @@ vuln0="$pidfile/Likely_Vulnerable"
 pathtest="$pidfile/Results"
 
 # Custom path for ZIPPED files from results.
-zipfiles="$pidfile/ZIP Files"
+zipfiles="$pidfile/ZIP"
 
 # Start all here
 init
