@@ -14,7 +14,7 @@ IF ARM:
 docker build -t registry.gitlab.com/docker329/pentest:arm .
 
 
-docker push registry.gitlab.com/docker329/pentest
+docker push registry.gitlab.com/docker329/pentest:ARCH-HERE
 
 ## On Android - SSH Button
 
