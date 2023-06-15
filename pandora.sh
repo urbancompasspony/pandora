@@ -10,7 +10,7 @@ namepan=$(cat /Data/hostname)
 # ntfy server:
 ntfysh=$(cat /Data/ntfysh)
 
-# How much parallel jobs will run at time.
+# How many parallel jobs will run at time.
 RUNA=$(cat /Data/runa)
 
 # PID FILE
@@ -19,7 +19,7 @@ pidfile="/Pentests"
 ################################################################################
 
 function init {
-  # Kill nmap after X seconds if hang!
+  # Kill nmap after 1800 seconds (30 min) if hang!
   sleep 1800 && pkill nmap & echo $! | tee "$pidfile"/.pndr.pid
 
   # Set some vars
@@ -69,8 +69,6 @@ function init {
   sleep 1
 
   # Register some logs
-  echo "Changed permissions." | tee -a "$tolog"
-  echo "Zipped files." | tee -a "$tolog"
   echo "Files are stored under $pathtest/$name" | tee -a "$tolog"
   sleep 1
 
@@ -83,13 +81,14 @@ function init {
   # Change permissions
   chmod 777 -R "$pathtest"
 
-  # Remove old Files
-  find "$zipfiles" -type d -mtime +30 -exec rm -rf {} \;
-  find "$zipfiles" -type f -mtime +30 -delete
+  # Remove old Files more than 15 days
+  find "$zipfiles" -type d -mtime +15 -exec rm -rf {} \;
+  find "$zipfiles" -type f -mtime +15 -delete
   find "$zipfiles" -type d -empty -delete
 
-  find "$pathtest" -type d -mtime +30 -exec rm -rf {} \;
-  find "$pathtest" -type f -mtime +30 -delete
+  # Delete VULNERABLE results from last 3 days!
+  find "$pathtest" -type d -mtime +3 -exec rm -rf {} \;
+  find "$pathtest" -type f -mtime +3 -delete
   find "$pathtest" -type d -empty -delete
 
   # Send message with attachments
@@ -103,6 +102,7 @@ function init {
       curl -u admin:5V06auso -T "$zipfiles"/$name.zip -H "Filename: $name.zip" "$ntfysh"/"$namepan"
     } || {
       echo "There's none VULNERABLE detected!" > /dev/null
+      echo "The End!" > /dev/null
     }
   }
 
@@ -118,13 +118,13 @@ exit 1
     }
 
 # Vulnerable Systems!
-vuln0="$pidfile/VULNERABLE_SYSTEMS"
+vuln0="$pidfile/Likely_Vulnerable"
 
 # Custom path for PENTESTS results
-pathtest="$pidfile/PENTESTS"
+pathtest="$pidfile/Results"
 
 # Custom path for ZIPPED files from results.
-zipfiles="$pidfile/ZIP"
+zipfiles="$pidfile/ZIP Files"
 
 # Start all here
 init
