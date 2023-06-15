@@ -7,7 +7,12 @@ GIT LAB:
 
 docker login registry.gitlab.com
 
-docker build -t registry.gitlab.com/docker329/pentest .
+docker build -t registry.gitlab.com/docker329/pentest:latest .
+
+IF ARM:
+
+docker build -t registry.gitlab.com/docker329/pentest:arm .
+
 
 docker push registry.gitlab.com/docker329/pentest
 
