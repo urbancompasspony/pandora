@@ -3,16 +3,17 @@ A new and freshed one! Docker only.
 
 ## Creating a Docker image of this service!
 
-GIT LAB:
+for AMD64
 
 docker login registry.gitlab.com
 
 docker build -t registry.gitlab.com/docker329/pentest:latest .
 
-IF ARM:
+for ARM64
 
 docker build -t registry.gitlab.com/docker329/pentest:arm .
 
+THE PUSH
 
 docker push registry.gitlab.com/docker329/pentest:ARCH-HERE
 
