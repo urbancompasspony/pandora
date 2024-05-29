@@ -20,7 +20,7 @@ pidfile="/Pentests"
 
 function init {
   # Kill nmap after 1800 seconds (30 min) if hang!
-  sleep 1800 && pkill nmap & echo $! | tee "$pidfile"/.pndr.pid
+  sleep 1800 && pkill nmap & echo $! | tee "$pidfile"/.teste.em.andamento
 
   # Set some vars
   datetime=$(date +"%d/%m/%y %H:%M")
@@ -55,11 +55,11 @@ function init {
   echo "This test ran from $datetime to $datetime2." | tee -a "$tolog"
 
   # Kill NMAP killer!
-  pidsleep=$(cat $pidfile/.pndr.pid)
+  pidsleep=$(cat $pidfile/.teste.em.andamento)
   echo "Killing PID $pidsleep of sleep_&_auto_kill nmap process" | tee -a "$tolog" 
   kill -9 "$pidsleep"
   pkill sleep
-  rm "$pidfile"/.pndr.pid
+  rm "$pidfile"/.teste.em.andamento
 
   # Identify if there is any VULNERABLE system!
   while read line
@@ -79,9 +79,7 @@ function init {
   sleep 1
 
   # Change permissions
-  chmod 777 -R "$pathtest"
-  chmod 777 -R "$zipfiles"
-  chmod 777 -R "$vuln0"
+  chmod 777 -R "$pidfile"
 
   # Remove old Files
   find "$vuln0" -type f -mtime +3 -delete
