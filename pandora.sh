@@ -16,33 +16,45 @@ RUNA=$(cat /Data/runa)
 # PID FILE
 pidfile="/Pentests"
 
+# Vulnerable Systems!
+vuln0="$pidfile/Ataques_Bem-sucedidos"
+
+# Custom path for PENTESTS results
+pathtest="$pidfile/Todos_os_Resultados"
+
+# Custom path for ZIPPED files from results.
+zipfiles="$pidfile/Historico"
+
+# Status
+statustest=".teste.em.andamento"
+
 ################################################################################
 
 function init {
-  # Kill nmap after 1800 seconds (30 min) if hang!
-  sleep 1800 && pkill nmap & echo $! | tee "$pidfile"/.teste.em.andamento
-
   # Set some vars
   datetime=$(date +"%d/%m/%y %H:%M")
   name=$(date +"%d_%m_%y-%H:%M")
-
+  
   # Create main dir, if it does not exist
   mkdir -p "$zipfiles"
   mkdir -p "$pathtest"/"$name"
+
+  # Kill nmap after 1800 seconds (30 min) if hang!
+  sleep 1800 && pkill nmap & echo $! | tee "$pidfile"/"$statustest"
 
   # Generate some Files and Vars
   touch "$pathtest"/"$name"/01IP; toip="$pathtest"/"$name"/01IP
   touch "$pathtest"/"$name"/02Log; tolog="$pathtest"/"$name"/02Log
 
   # Some logs
-  echo "Test started at $datetime!" | tee -a "$tolog"
+  echo "Pentest iniciado em $datetime!" | tee -a "$tolog"
 
   # Generate IPs to analyze:
   nmap -e "$rede" -n -sn $(hostname -I | awk '{print $1}')"/24" | grep report | awk '{print $5}' | tee "$toip"
 
   # Calculate remaining time:
   lres=$( wc -l < "$toip" )
-  echo "We found "$lres" IPs to analyze." | tee -a "$tolog"
+  echo "Encontramos "$lres" IPs para analisar." | tee -a "$tolog"
 
   # Do RUNA jobs at time!
   # Exclude 9100 because of printers!
@@ -52,14 +64,14 @@ function init {
   datetime2=$(date +"%d/%m/%y %H:%M")
 
   # Just some last logs to finish this.
-  echo "This test ran from $datetime to $datetime2." | tee -a "$tolog"
+  echo "Esse teste executou de $datetime ate $datetime2." | tee -a "$tolog"
 
   # Kill NMAP killer!
-  pidsleep=$(cat $pidfile/.teste.em.andamento)
+  pidsleep=$(cat $pidfile/$statustest)
   echo "Killing PID $pidsleep of sleep_&_auto_kill nmap process" | tee -a "$tolog" 
   kill -9 "$pidsleep"
   pkill sleep
-  rm "$pidfile"/.teste.em.andamento
+  rm "$pidfile"/"$statustest"
 
   # Identify if there is any VULNERABLE system!
   while read line
@@ -69,7 +81,7 @@ function init {
   sleep 1
 
   # Register some logs
-  echo "Files are stored under $pathtest/$name" | tee -a "$tolog"
+  echo "Os testes estao em $pathtest/$name" | tee -a "$tolog"
   sleep 1
 
   # Zip files!
@@ -94,13 +106,12 @@ function init {
 
   tontfy=$(cat /Data/ntfysh)
   [ "$tontfy" == "0" ] && {
-    echo "The End!" > /dev/null
+    echo "." > /dev/null
   } || {
     [ -d "$vuln0" ] && {
       curl -u admin:5V06auso -T "$zipfiles"/$name.zip -H "Filename: $name.zip" "$ntfysh"/"$namepan"
     } || {
-      echo "There's none VULNERABLE detected!" > /dev/null
-      echo "The End!" > /dev/null
+      echo "Nenhuma vulnerabilidade encontrada!" > /dev/null
     }
   }
 
@@ -109,20 +120,11 @@ exit 1
 
 # SUDO check!?
 [ "$EUID" -ne 0 ] && {
-  echo "Run this script as Root! Exiting..."
+  echo "Execute esse script como Root! Saindo..."
   exit
   } || {
-    echo "Nothing" > /dev/null
+    echo "." > /dev/null
     }
-
-# Vulnerable Systems!
-vuln0="$pidfile/Ataques Bem-sucedidos"
-
-# Custom path for PENTESTS results
-pathtest="$pidfile/Todos os Resultados"
-
-# Custom path for ZIPPED files from results.
-zipfiles="$pidfile/Historico em .zip"
 
 # Start all here
 init
