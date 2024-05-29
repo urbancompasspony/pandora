@@ -46,7 +46,7 @@ function init {
 
   # Do RUNA jobs at time!
   # Exclude 9100 because of printers!
-  cat "$toip" | parallel -j "$RUNA" -k "nmap -Pn --script vuln --exclude 9100 -p1-9099,9101-65535 {} | tee -a $pathtest/$name/{}"
+  cat "$toip" | parallel -j "$RUNA" -k "nmap -Pn --script vuln --exclude-ports 9100,9101,9102,9103,9104,9105,9106,9107,9108,9109,9110,9111,9112,9113,9114,9115,9116,9117,9118,9119,9120 -p 1-9099,9121-65535 {} | tee -a $pathtest/$name/{}"
 
   # When finished
   datetime2=$(date +"%d/%m/%y %H:%M")
@@ -64,7 +64,7 @@ function init {
   # Identify if there is any VULNERABLE system!
   while read line
   do
-    grep -Fq "VULNERABLE" "$pathtest/$name/$line" && mkdir -p "$vuln0" && cp "$pathtest/$name/$line" "$vuln0" || echo "Nothing found!" > /dev/null
+    grep -Fq "Exploitable" "$pathtest/$name/$line" | && mkdir -p "$vuln0" && cp "$pathtest/$name/$line" "$vuln0" || echo "Nothing found!" > /dev/null
   done < "$toip"
   sleep 1
 
@@ -80,16 +80,16 @@ function init {
 
   # Change permissions
   chmod 777 -R "$pathtest"
+  chmod 777 -R "$zipfiles"
+  chmod 777 -R "$vuln0"
 
-  # Remove old Files more than 15 days
-  find "$zipfiles" -type d -mtime +15 -exec rm -rf {} \;
-  find "$zipfiles" -type f -mtime +15 -delete
-  find "$zipfiles" -type d -empty -delete
+  # Remove old Files
+  find "$vuln0" -type f -mtime +3 -delete
 
-  # Delete VULNERABLE results from last 3 days!
   find "$pathtest" -type d -mtime +3 -exec rm -rf {} \;
-  find "$pathtest" -type f -mtime +3 -delete
   find "$pathtest" -type d -empty -delete
+  
+  find "$zipfiles" -type f -mtime +15 -delete
 
   # Send message with attachments
   sleep 1
@@ -118,13 +118,13 @@ exit 1
     }
 
 # Vulnerable Systems!
-vuln0="$pidfile/Likely_Vulnerable"
+vuln0="$pidfile/Falhas_Exploráveis"
 
 # Custom path for PENTESTS results
-pathtest="$pidfile/Results"
+pathtest="$pidfile/Todos_os_Resultados"
 
 # Custom path for ZIPPED files from results.
-zipfiles="$pidfile/ZIP"
+zipfiles="$pidfile/Histórico"
 
 # Start all here
 init
