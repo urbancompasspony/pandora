@@ -64,7 +64,7 @@ function init {
   # Identify if there is any VULNERABLE system!
   while read line
   do
-    grep -Fq "Exploitable" "$pathtest/$name/$line" | && mkdir -p "$vuln0" && cp "$pathtest/$name/$line" "$vuln0" || echo "Nothing found!" > /dev/null
+    grep -Fq "Exploitable" "$pathtest/$name/$line" && mkdir -p "$vuln0" && cp "$pathtest/$name/$line" "$vuln0" || echo "Nothing found!" > /dev/null
   done < "$toip"
   sleep 1
 
