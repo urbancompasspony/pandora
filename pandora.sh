@@ -118,13 +118,13 @@ exit 1
     }
 
 # Vulnerable Systems!
-vuln0="$pidfile/Falhas_Exploráveis"
+vuln0="$pidfile/Ataques Bem-sucedidos"
 
 # Custom path for PENTESTS results
-pathtest="$pidfile/Todos_os_Resultados"
+pathtest="$pidfile/Todos os Resultados"
 
 # Custom path for ZIPPED files from results.
-zipfiles="$pidfile/Histórico"
+zipfiles="$pidfile/Historico em .zip"
 
 # Start all here
 init
