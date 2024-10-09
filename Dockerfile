@@ -1,6 +1,6 @@
 FROM ubuntu:rolling
-MAINTAINER UrbanCompassPony <urbancompasspony@NOSPAM.NO>
-ENV DEBIAN_FRONTEND noninteractive
+LABEL UrbanCompassPony <urbancompasspony@NOSPAM.NO>
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt update && \
 apt upgrade -y && \
