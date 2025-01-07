@@ -1,4 +1,4 @@
-## pandora
+# Pandora
 A new and freshed one! Docker only.
 
 MULTIARCH
@@ -11,7 +11,7 @@ docker login registry.gitlab.com
 
 docker buildx build --push --platform linux/amd64,linux/arm64 --tag registry.gitlab.com/docker329/pentest:latest .
 
-# On Android - SSH Button
+## On Android - SSH Button
 
 Set DateTime
 
