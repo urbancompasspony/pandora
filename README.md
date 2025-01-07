@@ -4,11 +4,9 @@ docker buildx create --name mybuilder
 
 docker buildx use mybuilder
 
-docker login
+docker login registry.gitlab.com
 
 EXAMPLE
-
-docker buildx build --push --platform linux/amd64,linux/arm64 --tag urbancompasspony/pandora .
 
 docker buildx build --push --platform linux/amd64,linux/arm64 --tag registry.gitlab.com/docker329/pentest:latest .
 
