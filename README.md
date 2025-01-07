@@ -1,3 +1,6 @@
+## pandora
+A new and freshed one! Docker only.
+
 MULTIARCH
 
 docker buildx create --name mybuilder
@@ -6,34 +9,9 @@ docker buildx use mybuilder
 
 docker login registry.gitlab.com
 
-EXAMPLE
-
 docker buildx build --push --platform linux/amd64,linux/arm64 --tag registry.gitlab.com/docker329/pentest:latest .
 
-
-
-
-
-# pandora
-A new and freshed one! Docker only.
-
-## Creating a Docker image of this service!
-
-for AMD64
-
-docker login registry.gitlab.com
-
-docker build -t registry.gitlab.com/docker329/pentest:latest .
-
-for ARM64
-
-docker build -t registry.gitlab.com/docker329/pentest:arm .
-
-THE PUSH
-
-docker push registry.gitlab.com/docker329/pentest:ARCH-HERE
-
-## On Android - SSH Button
+# On Android - SSH Button
 
 Set DateTime
 
