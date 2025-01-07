@@ -13,11 +13,14 @@ ntfysh=$(cat /Data/ntfysh)
 # How many parallel jobs will run at time.
 RUNA=$(cat /Data/runa)
 
+# Blacklist
+blacklist0=$(cat /Data/blacklist)
+
 # PID FILE
 pidfile="/Pentests"
 
 # Vulnerable Systems!
-vuln0="$pidfile/Ataques_Bem-sucedidos"
+vuln0="$pidfile/Ataque_Bem-Sucedido"
 
 # Custom path for PENTESTS results
 pathtest="$pidfile/Todos_os_Resultados"
@@ -34,7 +37,7 @@ function init {
   # Set some vars
   datetime=$(date +"%d/%m/%y %H:%M")
   name=$(date +"%d_%m_%y-%H:%M")
-  
+
   # Create main dir, if it does not exist
   mkdir -p "$zipfiles"
   mkdir -p "$pathtest"/"$name"
@@ -43,22 +46,25 @@ function init {
   sleep 1800 && pkill nmap & echo $! | tee "$pidfile"/"$statustest"
 
   # Generate some Files and Vars
-  touch "$pathtest"/"$name"/01IP; toip="$pathtest"/"$name"/01IP
-  touch "$pathtest"/"$name"/02Log; tolog="$pathtest"/"$name"/02Log
+  touch "$pathtest"/"$name"/01_Todos_IPs; toip="$pathtest"/"$name"/01IP
+  touch "$pathtest"/"$name"/02_Logs; tolog="$pathtest"/"$name"/02Log
+  touch "$pathtest"/"$name"/03_Blacklisted; toip1="$pathtest"/"$name"/03_Blacklisted
 
   # Some logs
   echo "Pentest iniciado em $datetime!" | tee -a "$tolog"
 
   # Generate IPs to analyze:
-  nmap -e "$rede" -n -sn $(hostname -I | awk '{print $1}')"/24" | grep report | awk '{print $5}' | tee "$toip"
+  nmap -n -sn $(hostname -I | awk '{print $1}')"/24" | grep report | awk '{print $5}' | tee "$toip"
+
+  # Remove Blacklist IPs:
+  grep -v -F -x -f "$blacklist0" "$toip" > "$toip1"
 
   # Calculate remaining time:
-  lres=$( wc -l < "$toip" )
+  lres=$( wc -l < "$toip1" )
   echo "Encontramos "$lres" IPs para analisar." | tee -a "$tolog"
 
   # Do RUNA jobs at time!
-  # Exclude 9100 because of printers!
-  cat "$toip" | parallel -j "$RUNA" -k "nmap -Pn --script vuln --exclude-ports 9100,9101,9102,9103,9104,9105,9106,9107,9108,9109,9110,9111,9112,9113,9114,9115,9116,9117,9118,9119,9120 -p 1-9099,9121-65535 {} | tee -a $pathtest/$name/{}"
+  cat "$toip1" | parallel -j "$RUNA" -k "nmap -Pn --script vuln -p 1-65535 {} | tee -a $pathtest/$name/{}"
 
   # When finished
   datetime2=$(date +"%d/%m/%y %H:%M")
@@ -68,7 +74,7 @@ function init {
 
   # Kill NMAP killer!
   pidsleep=$(cat $pidfile/$statustest)
-  echo "Killing PID $pidsleep of sleep_&_auto_kill nmap process" | tee -a "$tolog" 
+  echo "Killing PID $pidsleep of sleep_&_auto_kill nmap process" | tee -a "$tolog"
   kill -9 "$pidsleep"
   pkill sleep
   rm "$pidfile"/"$statustest"
@@ -77,7 +83,7 @@ function init {
   while read line
   do
     grep -Fq "Exploitable" "$pathtest/$name/$line" && mkdir -p "$vuln0" && cp "$pathtest/$name/$line" "$vuln0" || echo "Nothing found!" > /dev/null
-  done < "$toip"
+  done < "$toip1"
   sleep 1
 
   # Register some logs
@@ -98,7 +104,7 @@ function init {
 
   find "$pathtest" -type d -mtime +3 -exec rm -rf {} \;
   find "$pathtest" -type d -empty -delete
-  
+
   find "$zipfiles" -type f -mtime +15 -delete
 
   # Send message with attachments
