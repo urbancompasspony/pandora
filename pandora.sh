@@ -13,9 +13,6 @@ ntfysh=$(cat /Data/ntfysh)
 # How many parallel jobs will run at time.
 RUNA=$(cat /Data/runa)
 
-# Blacklist
-blacklist0=$(cat /Data/blacklist)
-
 # PID FILE
 pidfile="/Pentests"
 
@@ -46,9 +43,12 @@ function init {
   sleep 1800 && pkill nmap & echo $! | tee "$pidfile"/"$statustest"
 
   # Generate some Files and Vars
-  touch "$pathtest"/"$name"/01_Todos_IPs; toip="$pathtest"/"$name"/01IP
-  touch "$pathtest"/"$name"/02_Logs; tolog="$pathtest"/"$name"/02Log
-  touch "$pathtest"/"$name"/03_Blacklisted; toip1="$pathtest"/"$name"/03_Blacklisted
+  touch "$pathtest"/"$name"/01_A_IP; toip="$pathtest"/"$name"/01_A_IP
+  touch "$pathtest"/"$name"/02_Logs; tolog="$pathtest"/"$name"/02_Logs
+  touch "$pathtest"/"$name"/03_WBIP; toip1="$pathtest"/"$name"/03_WBIP
+
+  touch "$pathtest"/"$name"/04_Blacklist
+  cat "/Data/blacklist" | tee "$pathtest"/"$name"/04_Blacklist
 
   # Some logs
   echo "Pentest iniciado em $datetime!" | tee -a "$tolog"
@@ -56,12 +56,12 @@ function init {
   # Generate IPs to analyze:
   nmap -n -sn $(hostname -I | awk '{print $1}')"/24" | grep report | awk '{print $5}' | tee "$toip"
 
-  # Remove Blacklist IPs:
-  grep -v -F -x -f "$blacklist0" "$toip" > "$toip1"
+  # Remove Blacklist IPs: (DO NOT USE /Data/blacklist as a string, doesn't work!)
+  grep -v -F -x -f "/Data/blacklist" "$toip" | tee "$toip1"
 
   # Calculate remaining time:
   lres=$( wc -l < "$toip1" )
-  echo "Encontramos "$lres" IPs para analisar." | tee -a "$tolog"
+  echo "Encontramos $lres IPs para analisar." | tee -a "$tolog"
 
   # Do RUNA jobs at time!
   cat "$toip1" | parallel -j "$RUNA" -k "nmap -Pn --script vuln -p 1-65535 {} | tee -a $pathtest/$name/{}"
