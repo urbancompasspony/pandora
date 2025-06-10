@@ -80,7 +80,7 @@ function init {
   rm "$pidfile"/"$statustest"
 
   # Identify if there is any VULNERABLE system!
-  while read line
+  while read -r line
   do
     grep -Fq "Exploitable" "$pathtest/$name/$line" && mkdir -p "$vuln0" && cp "$pathtest/$name/$line" "$vuln0" || echo "Nothing found!" > /dev/null
   done < "$toip1"
@@ -111,26 +111,25 @@ function init {
   sleep 1
 
   tontfy=$(cat /Data/ntfysh)
-  [ "$tontfy" == "0" ] && {
+  if [ "$tontfy" == "0" ]; then
     echo "." > /dev/null
-  } || {
-    [ -d "$vuln0" ] && {
-      curl -u admin:5V06auso -T "$zipfiles"/$name.zip -H "Filename: $name.zip" "$ntfysh"/"$namepan"
-    } || {
+  else
+    if [ -d "$vuln0" ]; then
+      curl -u admin:5V06auso -T "$zipfiles"/"$name".zip -H "Filename: $name.zip" "$ntfysh"/"$namepan"
+    else
       echo "Nenhuma vulnerabilidade encontrada!" > /dev/null
-    }
-  }
+    fi
+  fi
 
-exit 1
 }
 
 # SUDO check!?
-[ "$EUID" -ne 0 ] && {
+if [ "$EUID" -ne 0 ]; then
   echo "Execute esse script como Root! Saindo..."
   exit
-  } || {
+else
     echo "." > /dev/null
-    }
+fi
 
 # Start all here
 init
