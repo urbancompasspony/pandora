@@ -128,37 +128,69 @@ generate_html_report() {
 EOF
 }
 
-# Function to perform smart port scanning
+# Function to perform comprehensive port scanning
 smart_port_scan() {
     local ip=$1
     local temp_ports="$pathtest/$name/${ip}_ports_temp"
+    local temp_udp="$pathtest/$name/${ip}_udp_temp"
     
-    # First: Quick scan on common ports
-    echo "[$counter/$total_ips] Verificando portas comuns em $ip..." | tee -a "$tolog"
-    nmap -Pn --top-ports 1000 --min-rate 1000 "$ip" | tee "$temp_ports"
+    # Phase 1: Quick TCP SYN scan on common ports
+    echo "[$counter/$total_ips] 🔍 TCP SYN scan em portas comuns - $ip..." | tee -a "$tolog"
+    nmap -Pn -sS --top-ports 1000 --min-rate 1000 "$ip" | tee "$temp_ports"
     
-    # Check if any ports are open
+    # Phase 2: Quick UDP scan on critical ports
+    echo "[$counter/$total_ips] 🔍 UDP scan em portas críticas - $ip..." | tee -a "$tolog"
+    nmap -Pn -sU --top-ports 100 --min-rate 500 "$ip" | tee "$temp_udp"
+    
+    # Check if any TCP ports are open
+    local tcp_open=false
+    local udp_open=false
+    
     if grep -q "open" "$temp_ports"; then
-        echo "[$counter/$total_ips] Portas abertas encontradas em $ip. Iniciando scan de vulnerabilidades..." | tee -a "$tolog"
+        tcp_open=true
+    fi
+    
+    if grep -q "open" "$temp_udp"; then
+        udp_open=true
+    fi
+    
+    if [ "$tcp_open" = true ] || [ "$udp_open" = true ]; then
+        echo "[$counter/$total_ips] ✅ Portas abertas encontradas em $ip. Iniciando análise detalhada..." | tee -a "$tolog"
         
-        # Extract open ports
-        local open_ports=$(grep "open" "$temp_ports" | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
-        
-        if [ -n "$open_ports" ]; then
-            # Vulnerability scan only on open ports
-            nmap -Pn --script vuln -T4 --min-rate 1000 -p "$open_ports" "$ip" | tee -a "$pathtest/$name/$ip"
-        else
-            # Fallback to full scan if port extraction fails
-            nmap -Pn --script vuln -T4 --min-rate 1000 -p 1-65535 "$ip" | tee -a "$pathtest/$name/$ip"
+        # Extract open TCP ports
+        local tcp_ports=""
+        if [ "$tcp_open" = true ]; then
+            tcp_ports=$(grep "open" "$temp_ports" | grep "tcp" | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
         fi
         
-        # Clean up temp file
-        rm -f "$temp_ports"
+        # Extract open UDP ports  
+        local udp_ports=""
+        if [ "$udp_open" = true ]; then
+            udp_ports=$(grep "open" "$temp_udp" | grep "udp" | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
+        fi
+        
+        # Phase 3: Detailed scanning with version detection and vulnerability scripts
+        if [ -n "$tcp_ports" ]; then
+            echo "[$counter/$total_ips] 🔬 Análise detalhada TCP - $ip (portas: $tcp_ports)..." | tee -a "$tolog"
+            nmap -Pn -sS -sV --script vuln,safe -T4 --min-rate 1000 -p "$tcp_ports" "$ip" | tee -a "$pathtest/$name/$ip"
+            
+            # Optional: Stealth scans for evasion (uncomment if needed)
+            # echo "[$counter/$total_ips] 🥷 XMAS scan para evasão - $ip..." | tee -a "$tolog"
+            # nmap -Pn -sX -p "$tcp_ports" "$ip" | tee -a "$pathtest/$name/${ip}_stealth"
+        fi
+        
+        if [ -n "$udp_ports" ]; then
+            echo "[$counter/$total_ips] 🔬 Análise detalhada UDP - $ip (portas: $udp_ports)..." | tee -a "$tolog"
+            nmap -Pn -sU -sV --script vuln,safe -T4 --min-rate 500 -p "$udp_ports" "$ip" | tee -a "$pathtest/$name/$ip"
+        fi
+        
+        # Clean up temp files
+        rm -f "$temp_ports" "$temp_udp"
         return 0
     else
-        echo "[$counter/$total_ips] Nenhuma porta aberta encontrada em $ip. Pulando..." | tee -a "$tolog"
-        echo "No open ports found on $ip" > "$pathtest/$name/$ip"
-        rm -f "$temp_ports"
+        echo "[$counter/$total_ips] ❌ Nenhuma porta aberta encontrada em $ip. Pulando..." | tee -a "$tolog"
+        echo "No open ports found on $ip (TCP/UDP)" > "$pathtest/$name/$ip"
+        rm -f "$temp_ports" "$temp_udp"
         return 1
     fi
 }
