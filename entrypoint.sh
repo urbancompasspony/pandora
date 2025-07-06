@@ -23,15 +23,30 @@ fi
 chown -R www-data:www-data /var/www/pentests
 chmod -R 755 /var/www/pentests
 
-# Start Apache2 in background
-echo "🌐 Iniciando Apache2..."
-apache2ctl start
+# APACHE SERVER com Samba CGI
+service apache2 start &
 
 # Function to check Apache2 status
 check_apache() {
+    # Verifica se Apache2 está rodando
     if ! pgrep apache2 > /dev/null; then
-        echo "⚠️ Apache2 parou. Reiniciando..."
-        apache2ctl start
+        echo "Apache2 não encontrado. Iniciando..."
+        
+        # Limpa sockets órfãos
+        find /var/run/apache2/ -name "cgisock*" -exec unlink {} \; 2>/dev/null || true
+        
+        # Inicia Apache2
+        service apache2 start
+        sleep 2
+        
+        # Verifica se iniciou corretamente
+        if ! pgrep apache2 > /dev/null; then
+            echo "Falha ao iniciar. Tentando restart..."
+            service apache2 restart
+            sleep 2
+        fi
+    else
+        echo "Apache2 já está em execução (PID: $(pgrep apache2 | head -1))"
     fi
 }
 
