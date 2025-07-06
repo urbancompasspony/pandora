@@ -31,14 +31,14 @@ check_apache() {
     # Verifica se Apache2 está rodando
     if ! pgrep apache2 > /dev/null; then
         echo "Apache2 não encontrado. Iniciando..."
-        
+
         # Limpa sockets órfãos
         find /var/run/apache2/ -name "cgisock*" -exec unlink {} \; 2>/dev/null || true
-        
+
         # Inicia Apache2
         service apache2 start
         sleep 2
-        
+
         # Verifica se iniciou corretamente
         if ! pgrep apache2 > /dev/null; then
             echo "Falha ao iniciar. Tentando restart..."
@@ -58,7 +58,7 @@ update_web_stats() {
         if [ -d "/Pentests/Ataque_Bem-Sucedido" ]; then
             vuln_count=$(find /Pentests/Ataque_Bem-Sucedido -type f -name "RESUMO_*" 2>/dev/null | wc -l)
         fi
-        
+
         # Create a simple stats file for the web interface
         cat > /var/www/pentests/stats.json << EOF
 {
