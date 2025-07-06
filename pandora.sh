@@ -295,28 +295,70 @@ check_vulnerabilities() {
         if [ -f "$pathtest/$name/$line" ]; then
             if grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" > /dev/null; then
                 mkdir -p "$vuln0"
-                cp "$pathtest/$name/$line" "$vuln0"
 
-                # Generate detailed summary
-                echo "=== VULNERABILIDADE CRÍTICA ENCONTRADA ===" > "$vuln0/RESUMO_$line"
-                echo "IP: $line" >> "$vuln0/RESUMO_$line"
-                echo "Data: $datetime2" >> "$vuln0/RESUMO_$line"
-                echo "Dispositivo: $namepan" >> "$vuln0/RESUMO_$line"
-                echo "Metodologia: Black Box Double Blind" >> "$vuln0/RESUMO_$line"
-                echo "" >> "$vuln0/RESUMO_$line"
-                echo "VULNERABILIDADES DETECTADAS:" >> "$vuln0/RESUMO_$line"
-                echo "=============================" >> "$vuln0/RESUMO_$line"
-                grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" >> "$vuln0/RESUMO_$line"
-                echo "" >> "$vuln0/RESUMO_$line"
-                echo "CONTEXTO COMPLETO:" >> "$vuln0/RESUMO_$line"
-                echo "==================" >> "$vuln0/RESUMO_$line"
-                cat "$pathtest/$name/$line" >> "$vuln0/RESUMO_$line"
+                # Copy the full scan result directly to vuln folder (no subfolder)
+                cp "$pathtest/$name/$line" "$vuln0/$line.txt"
+
+                # Generate detailed summary directly in vuln folder (no subfolder)
+                echo "=== VULNERABILIDADE CRÍTICA ENCONTRADA ===" > "$vuln0/RESUMO_$line.txt"
+                echo "IP: $line" >> "$vuln0/RESUMO_$line.txt"
+                echo "Data: $datetime2" >> "$vuln0/RESUMO_$line.txt"
+                echo "Dispositivo: $namepan" >> "$vuln0/RESUMO_$line.txt"
+                echo "Metodologia: Black Box Double Blind" >> "$vuln0/RESUMO_$line.txt"
+                echo "" >> "$vuln0/RESUMO_$line.txt"
+                echo "VULNERABILIDADES DETECTADAS:" >> "$vuln0/RESUMO_$line.txt"
+                echo "=============================" >> "$vuln0/RESUMO_$line.txt"
+                grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" >> "$vuln0/RESUMO_$line.txt"
+                echo "" >> "$vuln0/RESUMO_$line.txt"
+                echo "CONTEXTO COMPLETO:" >> "$vuln0/RESUMO_$line.txt"
+                echo "==================" >> "$vuln0/RESUMO_$line.txt"
+                cat "$pathtest/$name/$line" >> "$vuln0/RESUMO_$line.txt"
 
                 vuln_found=0  # Vulnerabilities found
                 echo "🚨 VULNERABILIDADE CRÍTICA DETECTADA em $line!" | tee -a "$tolog"
             fi
         fi
     done < "$toip1"
+
+    # Create an index file for better web navigation if vulnerabilities found
+    if [ "$vuln_found" -eq 0 ]; then
+        cat > "$vuln0/index.html" << EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🚨 Vulnerabilidades Críticas - Project Pandora</title>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: "Courier New", monospace; background: #0a0a0a; color: #ff6666; margin: 20px; }
+        .header { background: #2d0000; border: 2px solid #ff0000; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+        .vuln-list { background: #1a0000; border: 1px solid #ff4444; padding: 15px; border-radius: 5px; }
+        a { color: #ff8888; text-decoration: none; font-weight: bold; display: block; margin: 5px 0; padding: 10px; background: #2d1111; border-radius: 3px; }
+        a:hover { background: #442222; color: #ffaaaa; }
+        .back-link { color: #00ffff; border: 1px solid #00ffff; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚨 VULNERABILIDADES CRÍTICAS DETECTADAS</h1>
+        <p><strong>Scan Date:</strong> $datetime2</p>
+        <p><strong>Device:</strong> $namepan</p>
+    </div>
+    <div class="vuln-list">
+        <h3>📋 Arquivos de Vulnerabilidades:</h3>
+EOF
+
+        # List all vulnerability files
+        for file in "$vuln0"/*.txt; do
+            if [ -f "$file" ]; then
+                filename=$(basename "$file")
+                echo "        <a href=\"$filename\">📄 $filename</a>" >> "$vuln0/index.html"
+            fi
+        done
+
+        echo '    </div>' >> "$vuln0/index.html"
+        echo '    <br><a href="/" class="back-link">← Voltar ao Dashboard</a>' >> "$vuln0/index.html"
+        echo '</body></html>' >> "$vuln0/index.html"
+    fi
 
     return $vuln_found
 }
