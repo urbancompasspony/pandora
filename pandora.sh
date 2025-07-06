@@ -1,6 +1,7 @@
 #!/bin/bash
 ###################
 # Project Pandora #
+# Black Box Edition #
 ################################################################################
 # Name for this Pandora device.
 namepan=$(cat /Data/hostname)
@@ -20,29 +21,31 @@ zipfiles="$pidfile/Historico"
 cachefile="$pidfile/cache_ips"
 # Status
 statustest=".teste.em.andamento"
+# Top 30 Critical UDP Ports for Corporate Black Box
+critical_udp_ports="53,67,68,88,123,137,138,161,162,514,520,1161,1434,1645,1646,1701,1812,1813,3074,4500,5060,5061,8161,10161,10162,69,1069,8069,500,27015"
 ################################################################################
 
 # Function to check dependencies
 check_dependencies() {
     local missing_deps=()
-    
+
     if ! command -v nmap &> /dev/null; then
         missing_deps+=("nmap")
     fi
-    
+
     if ! command -v parallel &> /dev/null; then
         missing_deps+=("parallel")
     fi
-    
+
     if ! command -v bc &> /dev/null; then
         missing_deps+=("bc")
     fi
-    
+
     if [ ${#missing_deps[@]} -gt 0 ]; then
         echo "Dependências não encontradas: ${missing_deps[*]}" | tee -a "$tolog"
         echo "Instalando dependências..." | tee -a "$tolog"
         apt-get update && apt-get install -y "${missing_deps[@]}"
-        
+
         if [ $? -ne 0 ]; then
             echo "Erro ao instalar dependências! Saindo..." | tee -a "$tolog"
             exit 1
@@ -53,17 +56,23 @@ check_dependencies() {
 # Function to adjust parallel jobs based on system load
 adjust_parallel_jobs() {
     local current_load=$(uptime | awk '{print $10}' | cut -d',' -f1)
-    
+
     if command -v bc &> /dev/null; then
-        if (( $(echo "$current_load > 2.0" | bc -l) )); then
+        if (( $(echo "$current_load > 3.0" | bc -l) )); then
             RUNA=$((RUNA/2))
             echo "Sistema sobrecarregado (load: $current_load). Reduzindo jobs paralelos para $RUNA" | tee -a "$tolog"
         fi
     fi
-    
-    # Ensure minimum of 1 job
+
+    # For black box aggressive scanning, minimum of 1 job
     if [ "$RUNA" -lt 1 ]; then
         RUNA=1
+    fi
+
+    # For black box, don't exceed 3 parallel jobs to avoid network detection
+    if [ "$RUNA" -gt 3 ]; then
+        RUNA=3
+        echo "⚠️ Black Box Mode: Limitando a 3 jobs paralelos para evasão" | tee -a "$tolog"
     fi
 }
 
@@ -71,255 +80,350 @@ adjust_parallel_jobs() {
 generate_html_report() {
     local vuln_count=$(find "$vuln0" -type f -name "RESUMO_*" 2>/dev/null | wc -l)
     local total_files=$(find "$pathtest/$name" -type f -name "[0-9]*" 2>/dev/null | wc -l)
-    
+    local tcp_scan_count=$(find "$pathtest/$name" -type f -name "*_tcp_*" 2>/dev/null | wc -l)
+    local udp_scan_count=$(find "$pathtest/$name" -type f -name "*_udp_*" 2>/dev/null | wc -l)
+
     cat > "$pathtest/$name/relatorio.html" << EOF
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Relatório Pentester - $name</title>
+    <title>Relatório Black Box Pentest - $name</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .header { background-color: #f0f0f0; padding: 20px; border-radius: 5px; }
-        .stats { background-color: #e8f5e8; padding: 15px; border-radius: 5px; margin: 10px 0; }
-        .vulnerable { background-color: #ffe6e6; padding: 15px; border-radius: 5px; margin: 10px 0; }
-        .safe { background-color: #e6ffe6; padding: 15px; border-radius: 5px; margin: 10px 0; }
+        body { font-family: Arial, sans-serif; margin: 20px; background: #0a0a0a; color: #e0e0e0; }
+        .header { background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%); color: white; padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 30px; }
+        .stats { background: #1a1a1a; border: 1px solid #333; padding: 15px; border-radius: 5px; margin: 10px 0; }
+        .vulnerable { background-color: #2d0000; border-left: 5px solid #ff4444; padding: 15px; border-radius: 5px; margin: 10px 0; }
+        .safe { background-color: #002d00; border-left: 5px solid #44ff44; padding: 15px; border-radius: 5px; margin: 10px 0; }
+        .warning { background-color: #2d2d00; border-left: 5px solid #ffff44; padding: 15px; border-radius: 5px; margin: 10px 0; }
+        a { color: #4499ff; text-decoration: none; font-weight: bold; }
+        a:hover { text-decoration: underline; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .blackbox-badge { background: #ff0000; color: white; padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🔍 Relatório de Pentest - Project Pandora</h1>
-        <h2>Dispositivo: $namepan</h2>
+        <h1>🔰 Project Pandora - Black Box Edition</h1>
+        <h2>Penetration Testing Results</h2>
+        <span class="blackbox-badge">DOUBLE BLIND BLACK BOX</span>
+        <p><strong>Dispositivo:</strong> $namepan</p>
         <p><strong>Período:</strong> $datetime até $datetime2</p>
     </div>
-    
-    <div class="stats">
-        <h3>📊 Estatísticas Gerais</h3>
-        <p><strong>IPs descobertos:</strong> $lres</p>
-        <p><strong>IPs testados:</strong> $total_files</p>
-        <p><strong>Vulnerabilidades encontradas:</strong> $vuln_count</p>
-        <p><strong>Jobs paralelos utilizados:</strong> $RUNA</p>
+
+    <div class="grid">
+        <div class="stats">
+            <h3>📊 Estatísticas de Scanning</h3>
+            <p><strong>IPs descobertos:</strong> $lres</p>
+            <p><strong>Hosts escaneados:</strong> $total_files</p>
+            <p><strong>Scans TCP realizados:</strong> $tcp_scan_count</p>
+            <p><strong>Scans UDP realizados:</strong> $udp_scan_count</p>
+            <p><strong>Jobs paralelos utilizados:</strong> $RUNA</p>
+        </div>
+
+        <div class="stats">
+            <h3>🔬 Metodologia Black Box</h3>
+            <p><strong>TCP Ports:</strong> Full scan 1-65535</p>
+            <p><strong>UDP Ports:</strong> Top 30 críticas corporativas</p>
+            <p><strong>Scripts:</strong> vuln,safe,discovery</p>
+            <p><strong>Stealth Level:</strong> T3 (Normal)</p>
+        </div>
     </div>
-    
+
     $(if [ "$vuln_count" -gt 0 ]; then
         echo '<div class="vulnerable">'
-        echo '<h3>⚠️ VULNERABILIDADES DETECTADAS</h3>'
-        echo '<p><strong>Atenção:</strong> Foram encontradas vulnerabilidades críticas!</p>'
-        echo '<p>Verifique os arquivos em: '"$vuln0"'</p>'
+        echo '<h3>🚨 VULNERABILIDADES CRÍTICAS DETECTADAS</h3>'
+        echo '<p><strong>⚠️ ATENÇÃO:</strong> Foram encontradas '$vuln_count' vulnerabilidades exploráveis!</p>'
+        echo '<p><strong>Localização:</strong> '"$vuln0"'</p>'
+        echo '<p><strong>Ação recomendada:</strong> Investigação imediata necessária</p>'
         echo '</div>'
     else
         echo '<div class="safe">'
         echo '<h3>✅ NENHUMA VULNERABILIDADE CRÍTICA</h3>'
-        echo '<p>Não foram encontradas vulnerabilidades exploráveis neste scan.</p>'
+        echo '<p>Não foram encontradas vulnerabilidades exploráveis neste scan black box.</p>'
+        echo '<p><em>Nota: Resultado baseado em scanning automático. Testes manuais podem revelar outros vetores.</em></p>'
         echo '</div>'
     fi)
-    
-    <div class="stats">
-        <h3>📁 Arquivos Gerados</h3>
-        <p><strong>Resultados completos:</strong> $pathtest/$name</p>
-        <p><strong>Arquivo compactado:</strong> $zipfiles/$name.zip</p>
-        <p><strong>Logs do teste:</strong> $tolog</p>
+
+    <div class="warning">
+        <h3>⚠️ Considerações Black Box</h3>
+        <p><strong>Cobertura:</strong> Este scan cobriu serviços expostos externamente</p>
+        <p><strong>Limitações:</strong> Aplicações web, autenticação e lógica de negócio requerem testes manuais</p>
+        <p><strong>Próximos passos:</strong> Manual enumeration, web app testing, social engineering</p>
     </div>
-    
+
+    <div class="grid">
+        <div class="stats">
+            <h3>📁 Arquivos Gerados</h3>
+            <p><strong>Resultados TCP:</strong> $pathtest/$name/*_tcp_*</p>
+            <p><strong>Resultados UDP:</strong> $pathtest/$name/*_udp_*</p>
+            <p><strong>Arquivo compactado:</strong> $zipfiles/$name.zip</p>
+            <p><strong>Logs completos:</strong> $tolog</p>
+        </div>
+
+        <div class="stats">
+            <h3>🔍 Portas UDP Críticas Testadas</h3>
+            <p><strong>DNS:</strong> 53</p>
+            <p><strong>DHCP:</strong> 67,68</p>
+            <p><strong>SNMP:</strong> 161,162,1161,8161,10161,10162</p>
+            <p><strong>Kerberos:</strong> 88</p>
+            <p><strong>RADIUS:</strong> 1812,1813,1645,1646</p>
+            <p><strong>VPN/VoIP:</strong> 500,4500,1701,5060,5061</p>
+            <p><strong>E mais...</strong> (Ver logs para lista completa)</p>
+        </div>
+    </div>
+
     <hr>
-    <p><em>Relatório gerado automaticamente pelo Project Pandora</em></p>
+    <p><em>🔰 Relatório gerado automaticamente pelo Project Pandora - Black Box Edition</em></p>
+    <p><em>⚠️ Este é um pentest automatizado. Testes manuais adicionais são recomendados.</em></p>
 </body>
 </html>
 EOF
 }
 
-# Function to perform comprehensive port scanning
-smart_port_scan() {
+# Function to perform aggressive black box port scanning
+aggressive_black_box_scan() {
     local ip=$1
-    local temp_ports="$pathtest/$name/${ip}_ports_temp"
-    local temp_udp="$pathtest/$name/${ip}_udp_temp"
-    
-    # Phase 1: Quick TCP SYN scan on common ports
-    echo "[$counter/$total_ips] 🔍 TCP SYN scan em portas comuns - $ip..." | tee -a "$tolog"
-    nmap -Pn -sS --top-ports 1000 --min-rate 1000 "$ip" | tee "$temp_ports"
-    
-    # Phase 2: Quick UDP scan on critical ports
-    echo "[$counter/$total_ips] 🔍 UDP scan em portas críticas - $ip..." | tee -a "$tolog"
-    nmap -Pn -sU --top-ports 100 --min-rate 500 "$ip" | tee "$temp_udp"
-    
-    # Check if any TCP ports are open
+    local tcp_results="$pathtest/$name/${ip}_tcp_full"
+    local udp_results="$pathtest/$name/${ip}_udp_critical"
+    local final_results="$pathtest/$name/$ip"
+
+    echo "[$counter/$total_ips] 🎯 BLACK BOX SCAN: $ip" | tee -a "$tolog"
+
+    # Phase 1: Full TCP port scan (1-65535) - The complete attack surface
+    echo "[$counter/$total_ips] 🔍 TCP Full Scan (1-65535) - $ip..." | tee -a "$tolog"
+    nmap -Pn -sS -p 1-65535 --min-rate 2000 --max-retries 1 -T3 "$ip" | tee "$tcp_results"
+
+    # Phase 2: Critical UDP ports for corporate environments
+    echo "[$counter/$total_ips] 🔍 UDP Critical Corporate Scan - $ip..." | tee -a "$tolog"
+    nmap -Pn -sU -p "$critical_udp_ports" --min-rate 1000 --max-retries 1 -T3 "$ip" | tee "$udp_results"
+
+    # Check if any ports were found open
     local tcp_open=false
     local udp_open=false
-    
-    if grep -q "open" "$temp_ports"; then
+    local open_tcp_ports=""
+    local open_udp_ports=""
+
+    if grep -q "open" "$tcp_results"; then
         tcp_open=true
+        open_tcp_ports=$(grep "open" "$tcp_results" | grep "tcp" | awk '{print $1}' | cut -d'/' -f1 | grep -E '^[0-9]+$' | sort -n | tr '\n' ',' | sed 's/,$//')
     fi
-    
-    if grep -q "open" "$temp_udp"; then
+
+    if grep -q "open" "$udp_results"; then
         udp_open=true
+        open_udp_ports=$(grep "open" "$udp_results" | grep "udp" | awk '{print $1}' | cut -d'/' -f1 | grep -E '^[0-9]+$' | sort -n | tr '\n' ',' | sed 's/,$//')
     fi
-    
+
     if [ "$tcp_open" = true ] || [ "$udp_open" = true ]; then
-        echo "[$counter/$total_ips] ✅ Portas abertas encontradas em $ip. Iniciando análise detalhada..." | tee -a "$tolog"
-        
-        # Extract open TCP ports
-        local tcp_ports=""
+        echo "[$counter/$total_ips] ✅ ALVO INTERESSANTE: $ip - Iniciando análise de vulnerabilidades..." | tee -a "$tolog"
+
+        # Initialize final results file
+        echo "=== BLACK BOX PENETRATION TEST RESULTS ===" > "$final_results"
+        echo "Target: $ip" >> "$final_results"
+        echo "Scan Date: $(date)" >> "$final_results"
+        echo "Methodology: Double Blind Black Box" >> "$final_results"
+        echo "=============================================" >> "$final_results"
+        echo "" >> "$final_results"
+
+        # Phase 3: Detailed vulnerability assessment on open TCP ports
+        if [ "$tcp_open" = true ] && [ -n "$open_tcp_ports" ]; then
+            echo "[$counter/$total_ips] 🔬 TCP Vulnerability Assessment - $ip (portas: $open_tcp_ports)..." | tee -a "$tolog"
+
+            if echo "$open_tcp_ports" | grep -qE '^[0-9]+(,[0-9]+)*$'; then
+                echo "=== TCP VULNERABILITY SCAN RESULTS ===" >> "$final_results"
+                nmap -Pn -sS -sV -sC --script vuln,safe,discovery,auth,brute --script-timeout 300s -T3 -p "$open_tcp_ports" "$ip" | tee -a "$final_results"
+                echo "" >> "$final_results"
+            else
+                echo "❌ Formato de portas TCP inválido para $ip: $open_tcp_ports" | tee -a "$tolog"
+                echo "Fazendo scan de serviços básicos como fallback..." | tee -a "$tolog"
+                echo "=== TCP SERVICE DETECTION (FALLBACK) ===" >> "$final_results"
+                nmap -Pn -sS -sV -sC --script safe -T3 "$ip" | tee -a "$final_results"
+                echo "" >> "$final_results"
+            fi
+        fi
+
+        # Phase 4: Detailed vulnerability assessment on open UDP ports
+        if [ "$udp_open" = true ] && [ -n "$open_udp_ports" ]; then
+            echo "[$counter/$total_ips] 🔬 UDP Vulnerability Assessment - $ip (portas: $open_udp_ports)..." | tee -a "$tolog"
+
+            if echo "$open_udp_ports" | grep -qE '^[0-9]+(,[0-9]+)*$'; then
+                echo "=== UDP VULNERABILITY SCAN RESULTS ===" >> "$final_results"
+                nmap -Pn -sU -sV -sC --script vuln,safe,discovery --script-timeout 300s -T3 -p "$open_udp_ports" "$ip" | tee -a "$final_results"
+                echo "" >> "$final_results"
+            else
+                echo "❌ Formato de portas UDP inválido para $ip: $open_udp_ports" | tee -a "$tolog"
+                echo "Fazendo scan UDP limitado como fallback..." | tee -a "$tolog"
+                echo "=== UDP SERVICE DETECTION (FALLBACK) ===" >> "$final_results"
+                nmap -Pn -sU --script safe -T3 -p "$critical_udp_ports" "$ip" | tee -a "$final_results"
+                echo "" >> "$final_results"
+            fi
+        fi
+
+        # Phase 5: Additional reconnaissance for interesting targets
         if [ "$tcp_open" = true ]; then
-            tcp_ports=$(grep "open" "$temp_ports" | grep "tcp" | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
+            echo "[$counter/$total_ips] 🕵️ Reconnaissance adicional - $ip..." | tee -a "$tolog"
+            echo "=== ADDITIONAL RECONNAISSANCE ===" >> "$final_results"
+
+            # OS Detection
+            nmap -Pn -O --osscan-guess -T3 "$ip" 2>/dev/null | grep -E "(OS|Device|Network Distance)" >> "$final_results" 2>/dev/null || echo "OS Detection: Failed" >> "$final_results"
+
+            # Traceroute for network mapping
+            nmap -Pn --traceroute -T3 "$ip" 2>/dev/null | grep -A 20 "TRACEROUTE" >> "$final_results" 2>/dev/null || echo "Traceroute: Failed" >> "$final_results"
+
+            echo "" >> "$final_results"
         fi
-        
-        # Extract open UDP ports  
-        local udp_ports=""
-        if [ "$udp_open" = true ]; then
-            udp_ports=$(grep "open" "$temp_udp" | grep "udp" | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
-        fi
-        
-        # Phase 3: Detailed scanning with version detection and vulnerability scripts
-        if [ -n "$tcp_ports" ]; then
-            echo "[$counter/$total_ips] 🔬 Análise detalhada TCP - $ip (portas: $tcp_ports)..." | tee -a "$tolog"
-            nmap -Pn -sS -sV --script vuln,safe -T4 --min-rate 1000 -p "$tcp_ports" "$ip" | tee -a "$pathtest/$name/$ip"
-            
-            # Optional: Stealth scans for evasion (uncomment if needed)
-            # echo "[$counter/$total_ips] 🥷 XMAS scan para evasão - $ip..." | tee -a "$tolog"
-            # nmap -Pn -sX -p "$tcp_ports" "$ip" | tee -a "$pathtest/$name/${ip}_stealth"
-        fi
-        
-        if [ -n "$udp_ports" ]; then
-            echo "[$counter/$total_ips] 🔬 Análise detalhada UDP - $ip (portas: $udp_ports)..." | tee -a "$tolog"
-            nmap -Pn -sU -sV --script vuln,safe -T4 --min-rate 500 -p "$udp_ports" "$ip" | tee -a "$pathtest/$name/$ip"
-        fi
-        
+
         # Clean up temp files
-        rm -f "$temp_ports" "$temp_udp"
+        rm -f "$tcp_results" "$udp_results"
         return 0
     else
-        echo "[$counter/$total_ips] ❌ Nenhuma porta aberta encontrada em $ip. Pulando..." | tee -a "$tolog"
-        echo "No open ports found on $ip (TCP/UDP)" > "$pathtest/$name/$ip"
-        rm -f "$temp_ports" "$temp_udp"
+        echo "[$counter/$total_ips] ❌ Host sem serviços expostos: $ip" | tee -a "$tolog"
+        echo "No accessible services found on $ip (Black Box Scan)" > "$final_results"
+        echo "TCP Scan: 1-65535 (No open ports)" >> "$final_results"
+        echo "UDP Scan: Critical 30 ports (No open ports)" >> "$final_results"
+        rm -f "$tcp_results" "$udp_results"
         return 1
     fi
 }
 
 # Function to check for vulnerabilities with enhanced detection
 check_vulnerabilities() {
-    local vuln_found=0
-    
+    local vuln_found=1  # Default to no vulnerabilities found
+
+    echo "🔍 Analisando resultados para vulnerabilidades críticas..." | tee -a "$tolog"
+
     while read -r line; do
         if [ -f "$pathtest/$name/$line" ]; then
-            if grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL)" "$pathtest/$name/$line" > /dev/null; then
+            if grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" > /dev/null; then
                 mkdir -p "$vuln0"
                 cp "$pathtest/$name/$line" "$vuln0"
-                
+
                 # Generate detailed summary
-                echo "=== VULNERABILIDADE ENCONTRADA ===" > "$vuln0/RESUMO_$line"
+                echo "=== VULNERABILIDADE CRÍTICA ENCONTRADA ===" > "$vuln0/RESUMO_$line"
                 echo "IP: $line" >> "$vuln0/RESUMO_$line"
                 echo "Data: $datetime2" >> "$vuln0/RESUMO_$line"
                 echo "Dispositivo: $namepan" >> "$vuln0/RESUMO_$line"
+                echo "Metodologia: Black Box Double Blind" >> "$vuln0/RESUMO_$line"
                 echo "" >> "$vuln0/RESUMO_$line"
-                echo "DETALHES:" >> "$vuln0/RESUMO_$line"
-                grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL)" "$pathtest/$name/$line" >> "$vuln0/RESUMO_$line"
-                
-                vuln_found=1
-                echo "⚠️  VULNERABILIDADE DETECTADA em $line!" | tee -a "$tolog"
+                echo "VULNERABILIDADES DETECTADAS:" >> "$vuln0/RESUMO_$line"
+                echo "=============================" >> "$vuln0/RESUMO_$line"
+                grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" >> "$vuln0/RESUMO_$line"
+                echo "" >> "$vuln0/RESUMO_$line"
+                echo "CONTEXTO COMPLETO:" >> "$vuln0/RESUMO_$line"
+                echo "==================" >> "$vuln0/RESUMO_$line"
+                cat "$pathtest/$name/$line" >> "$vuln0/RESUMO_$line"
+
+                vuln_found=0  # Vulnerabilities found
+                echo "🚨 VULNERABILIDADE CRÍTICA DETECTADA em $line!" | tee -a "$tolog"
             fi
         fi
     done < "$toip1"
-    
+
     return $vuln_found
 }
 
-# Function to manage IP cache
+# Function to manage IP cache for black box environments
 manage_ip_cache() {
     # Create cache directory if it doesn't exist
     mkdir -p "$(dirname "$cachefile")"
-    
-    # Remove old cache entries (older than 24 hours)
+
+    # For black box, keep cache for 48 hours instead of 24
     if [ -f "$cachefile" ]; then
-        find "$cachefile" -mtime +1 -delete 2>/dev/null
+        find "$cachefile" -mtime +2 -delete 2>/dev/null
     fi
-    
+
     # Filter out recently scanned IPs
     if [ -f "$cachefile" ]; then
-        echo "Removendo IPs escaneados recentemente..." | tee -a "$tolog"
-        local recent_count=$(wc -l < "$cachefile")
-        grep -v -F -x -f "$cachefile" "$toip1" > "$toip1.filtered"
+        echo "Removendo IPs escaneados nas últimas 48h (Black Box Mode)..." | tee -a "$tolog"
+        local recent_count=$(wc -l < "$cachefile" 2>/dev/null || echo 0)
+        grep -v -F -x -f "$cachefile" "$toip1" > "$toip1.filtered" 2>/dev/null || cp "$toip1" "$toip1.filtered"
         mv "$toip1.filtered" "$toip1"
-        echo "Removidos $recent_count IPs do cache." | tee -a "$tolog"
+        echo "Cache: $recent_count IPs removidos da lista de scan." | tee -a "$tolog"
     fi
-    
+
     # Add current IPs to cache
     cat "$toip1" >> "$cachefile"
-    sort -u "$cachefile" -o "$cachefile"
+    sort -u "$cachefile" -o "$cachefile" 2>/dev/null
 }
 
 function init {
     # Set some vars
     datetime=$(date +"%d/%m/%y %H:%M")
     name=$(date +"%d_%m_%y-%H:%M")
-    
+
     # Create main dir, if it does not exist
     mkdir -p "$zipfiles"
     mkdir -p "$pathtest"/"$name"
-    
+
     # Check if directories were created successfully
     if [ ! -d "$pathtest/$name" ]; then
         echo "Erro ao criar diretório de testes!" | tee -a "$tolog"
         exit 1
     fi
-    
+
     # Generate some Files and Vars
     touch "$pathtest"/"$name"/01_A_IP; toip="$pathtest"/"$name"/01_A_IP
     touch "$pathtest"/"$name"/02_Logs; tolog="$pathtest"/"$name"/02_Logs
     touch "$pathtest"/"$name"/03_WBIP; toip1="$pathtest"/"$name"/03_WBIP
     touch "$pathtest"/"$name"/04_Blacklist
     cat "/Data/blacklist" | tee "$pathtest"/"$name"/04_Blacklist
-    
+
     # Check dependencies
     check_dependencies
-    
+
     # Some logs
-    echo "🚀 Pentest iniciado em $datetime!" | tee -a "$tolog"
+    echo "🔰 BLACK BOX PENTEST INICIADO em $datetime!" | tee -a "$tolog"
     echo "📱 Dispositivo: $namepan" | tee -a "$tolog"
-    
+    echo "🎯 Metodologia: Double Blind Black Box" | tee -a "$tolog"
+    echo "🔬 TCP Scope: Full scan 1-65535" | tee -a "$tolog"
+    echo "🔬 UDP Scope: Top 30 portas críticas corporativas" | tee -a "$tolog"
+
     # Generate IPs to analyze with improved discovery
-    echo "🔍 Descobrindo hosts ativos..." | tee -a "$tolog"
-    nmap -n -sn --min-rate 1000 $(hostname -I | awk '{print $1}')"/24" | grep "Nmap scan report" | awk '{print $5}' | tee "$toip"
-    
+    echo "🔍 Descobrindo hosts ativos na rede..." | tee -a "$tolog"
+    nmap -n -sn --min-rate 2000 $(hostname -I | awk '{print $1}')"/24" | grep "Nmap scan report" | awk '{print $5}' | tee "$toip"
+
     # Remove Blacklist IPs
     grep -v -F -x -f "/Data/blacklist" "$toip" | tee "$toip1"
-    
-    # Manage IP cache
+
+    # Manage IP cache for black box
     manage_ip_cache
-    
+
     # Calculate remaining hosts
     lres=$(wc -l < "$toip1")
-    echo "📊 Encontramos $lres IPs para analisar." | tee -a "$tolog"
-    
+    echo "📊 BLACK BOX TARGET: $lres IPs para análise completa." | tee -a "$tolog"
+
     if [ "$lres" -eq 0 ]; then
-        echo "⚠️  Nenhum IP para testar. Finalizando..." | tee -a "$tolog"
+        echo "⚠️ Nenhum IP para testar. Finalizando..." | tee -a "$tolog"
         exit 0
     fi
-    
-    # Adjust parallel jobs based on system load
+
+    # Adjust parallel jobs for black box stealth
     adjust_parallel_jobs
-    echo "⚙️  Utilizando $RUNA jobs paralelos." | tee -a "$tolog"
-    
-    # Kill nmap after 3600 seconds (60 min) if hang!
-    sleep 3600 && pkill nmap & echo $! | tee "$pidfile"/"$statustest"
-    
+    echo "⚙️ Black Box Mode: Utilizando $RUNA jobs paralelos (stealth)." | tee -a "$tolog"
+
+    # Kill nmap after 7200 seconds (2 hours) for black box comprehensive scans
+    sleep 7200 && pkill nmap & echo $! | tee "$pidfile"/"$statustest"
+
     # Progress tracking
     total_ips=$lres
     counter=0
-    
-    echo "🔥 Iniciando testes de vulnerabilidade..." | tee -a "$tolog"
-    
+
+    echo "🔥 INICIANDO BLACK BOX PENETRATION TEST..." | tee -a "$tolog"
+    echo "🎯 Target Network: $(hostname -I | awk '{print $1}')/24" | tee -a "$tolog"
+    echo "📋 Critical UDP Ports: $critical_udp_ports" | tee -a "$tolog"
+
     # Export functions for parallel execution
-    export -f smart_port_scan
-    export pathtest name tolog counter total_ips
-    
-    # Do smart scanning with parallel processing
-    cat "$toip1" | parallel -j "$RUNA" -k "smart_port_scan {} && echo 'Concluído: {}' || echo 'Falhou: {}'"
-    
+    export -f aggressive_black_box_scan
+    export pathtest name tolog counter total_ips critical_udp_ports
+
+    # Execute aggressive black box scanning
+    cat "$toip1" | parallel -j "$RUNA" -k "aggressive_black_box_scan {} && echo 'CONCLUÍDO: {}' || echo 'FALHOU: {}'"
+
     # When finished
     datetime2=$(date +"%d/%m/%y %H:%M")
-    
+
     # Just some last logs to finish this.
-    echo "✅ Esse teste executou de $datetime ate $datetime2." | tee -a "$tolog"
-    
+    echo "✅ BLACK BOX PENTEST CONCLUÍDO: $datetime até $datetime2." | tee -a "$tolog"
+
     # Kill NMAP killer!
     if [ -f "$pidfile/$statustest" ]; then
         pidsleep=$(cat "$pidfile/$statustest")
@@ -328,55 +432,57 @@ function init {
         pkill sleep 2>/dev/null
         rm "$pidfile"/"$statustest"
     fi
-    
+
     # Enhanced vulnerability detection
-    echo "🔍 Analisando vulnerabilidades..." | tee -a "$tolog"
+    echo "🔍 Analisando resultados para vulnerabilidades críticas..." | tee -a "$tolog"
     check_vulnerabilities
     vuln_result=$?
-    
+
     sleep 1
-    
+
     # Register some logs
-    echo "📁 Os testes estao em $pathtest/$name" | tee -a "$tolog"
-    
-    # Generate HTML report
-    echo "📊 Gerando relatório HTML..." | tee -a "$tolog"
+    echo "📁 Resultados completos em: $pathtest/$name" | tee -a "$tolog"
+
+    # Generate comprehensive HTML report
+    echo "📊 Gerando relatório Black Box HTML..." | tee -a "$tolog"
     generate_html_report
-    
+
     sleep 1
-    
+
     # Zip files!
-    echo "📦 Compactando resultados..." | tee -a "$tolog"
+    echo "📦 Compactando resultados do Black Box..." | tee -a "$tolog"
     zip -r "$zipfiles/$name.zip" "$pathtest/$name" >> "$tolog" 2>&1
-    
+
     sleep 1
-    
+
     # Change permissions
     chmod 777 -R "$pidfile"
-    
+
     # Remove old Files with better cleanup
     echo "🧹 Limpando arquivos antigos..." | tee -a "$tolog"
     find "$vuln0" -type f -mtime +3 -delete 2>/dev/null
     find "$pathtest" -type d -mtime +3 -exec rm -rf {} + 2>/dev/null
     find "$pathtest" -type d -empty -delete 2>/dev/null
     find "$zipfiles" -type f -mtime +15 -delete 2>/dev/null
-    
+
     # Send message with attachments
     sleep 1
     tontfy=$(cat /Data/ntfysh)
-    
+
     if [ "$tontfy" != "0" ]; then
         if [ "$vuln_result" -eq 0 ]; then
-            echo "📤 Enviando notificação com vulnerabilidades encontradas..." | tee -a "$tolog"
-            curl -u admin:5V06auso -T "$zipfiles"/"$name".zip -H "Filename: $name.zip" -H "Title: ⚠️ VULNERABILIDADES ENCONTRADAS - $namepan" -H "Priority: high" "$ntfysh"/"$namepan"
+            echo "📤 ALERTA: Enviando notificação de vulnerabilidades críticas..." | tee -a "$tolog"
+            curl -u admin:5V06auso -T "$zipfiles"/"$name".zip -H "Filename: $name.zip" -H "Title: 🚨 VULNERABILIDADES CRÍTICAS - BLACK BOX - $namepan" -H "Priority: urgent" "$ntfysh"/"$namepan"
         else
-            echo "📤 Enviando notificação - scan concluído sem vulnerabilidades críticas." | tee -a "$tolog"
-            curl -u admin:5V06auso -d "✅ Scan concluído em $namepan. $lres IPs testados. Nenhuma vulnerabilidade crítica encontrada." -H "Title: Scan Concluído - $namepan" "$ntfysh"/"$namepan"
+            echo "📤 Enviando notificação - Black Box scan concluído." | tee -a "$tolog"
+            curl -u admin:5V06auso -d "✅ Black Box Pentest concluído em $namepan. $lres IPs testados. TCP: 1-65535, UDP: Top 30 críticas. Nenhuma vulnerabilidade crítica detectada." -H "Title: Black Box Scan Concluído - $namepan" "$ntfysh"/"$namepan"
         fi
     fi
-    
-    echo "🎉 Pentest finalizado com sucesso!" | tee -a "$tolog"
-    echo "📊 Relatório HTML disponível em: $pathtest/$name/relatorio.html" | tee -a "$tolog"
+
+    echo "🎉 BLACK BOX PENETRATION TEST FINALIZADO!" | tee -a "$tolog"
+    echo "📊 Relatório HTML: $pathtest/$name/relatorio.html" | tee -a "$tolog"
+    echo "🎯 Metodologia: Double Blind Black Box Complete" | tee -a "$tolog"
+    echo "📋 Cobertura: TCP 1-65535 + UDP Top 30 Critical" | tee -a "$tolog"
 }
 
 # SUDO check!
@@ -386,11 +492,12 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Start all here
-echo "🔰 Project Pandora - Pentester Automatizado"
-echo "🔰 Versão Melhorada com Otimizações"
+echo "🔰 Project Pandora - Black Box Penetration Tester"
+echo "🎯 Double Blind Corporate Assessment Edition"
+echo "🔬 TCP: Full 1-65535 | UDP: Top 30 Critical"
 echo "=============================================="
 
 init
 
-echo "✅ Processo finalizado com sucesso!"
+echo "✅ Black Box Penetration Test finalizado com sucesso!"
 exit 0
