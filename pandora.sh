@@ -344,30 +344,35 @@ check_vulnerabilities() {
     echo "Analisando resultados para vulnerabilidades criticas..." | tee -a "$tolog"
 
     while read -r line; do
-        if [ -f "$pathtest/$name/$line" ]; then
+    if [ -f "$pathtest/$name/$line" ]; then
             if grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" > /dev/null; then
-                mkdir -p "$vuln0"
+                # Check if it's NOT a false positive
+                if ! grep -E "(NOT VULNERABLE|not vulnerable|Not vulnerable|NOT Exploitable|not exploitable|Not exploitable|State: NOT VULNERABLE|: Not vulnerable|Status: Not vulnerable)" "$pathtest/$name/$line" > /dev/null; then
+                    mkdir -p "$vuln0"
+                    
+                    # Copy the full scan result directly to vuln folder (no subfolder)
+                    cp "$pathtest/$name/$line" "$vuln0/${line}_scan.txt"
+                    
+                    # Generate detailed summary directly in vuln folder (no subfolder)
+                    echo "=== VULNERABILIDADE CRITICA ENCONTRADA ===" > "$vuln0/RESUMO_${line}.txt"
+                    echo "IP: $line" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "Data: $datetime2" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "Dispositivo: $namepan" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "Metodologia: Black Box Double Blind" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "VULNERABILIDADES DETECTADAS:" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "=============================" >> "$vuln0/RESUMO_${line}.txt"
+                    grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "CONTEXTO COMPLETO:" >> "$vuln0/RESUMO_${line}.txt"
+                    echo "==================" >> "$vuln0/RESUMO_${line}.txt"
+                    cat "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt"
 
-                # Copy the full scan result directly to vuln folder (no subfolder)
-                cp "$pathtest/$name/$line" "$vuln0/${line}_scan.txt"
-
-                # Generate detailed summary directly in vuln folder (no subfolder)
-                echo "=== VULNERABILIDADE CRITICA ENCONTRADA ===" > "$vuln0/RESUMO_${line}.txt"
-                echo "IP: $line" >> "$vuln0/RESUMO_${line}.txt"
-                echo "Data: $datetime2" >> "$vuln0/RESUMO_${line}.txt"
-                echo "Dispositivo: $namepan" >> "$vuln0/RESUMO_${line}.txt"
-                echo "Metodologia: Black Box Double Blind" >> "$vuln0/RESUMO_${line}.txt"
-                echo "" >> "$vuln0/RESUMO_${line}.txt"
-                echo "VULNERABILIDADES DETECTADAS:" >> "$vuln0/RESUMO_${line}.txt"
-                echo "=============================" >> "$vuln0/RESUMO_${line}.txt"
-                grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt"
-                echo "" >> "$vuln0/RESUMO_${line}.txt"
-                echo "CONTEXTO COMPLETO:" >> "$vuln0/RESUMO_${line}.txt"
-                echo "==================" >> "$vuln0/RESUMO_${line}.txt"
-                cat "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt"
-
-                vuln_found=0  # Vulnerabilities found
-                echo "VULNERABILIDADE CRITICA DETECTADA em $line!" | tee -a "$tolog"
+                    vuln_found=0  # Vulnerabilities found
+                    echo "VULNERABILIDADE CRITICA DETECTADA em $line!" | tee -a "$tolog"
+                else
+                    echo "[$line] Resultado 'not vulnerable' ignorado (não é vulnerabilidade real)" | tee -a "$tolog"
+                fi
             fi
         fi
     done < "$toip1"
