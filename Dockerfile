@@ -7,6 +7,8 @@ ENV APACHE_RUN_GROUP=www-data
 ENV APACHE_LOG_DIR=/var/log/apache2
 ENV APACHE_LOCK_DIR=/var/lock/apache2
 ENV APACHE_PID_FILE=/var/run/apache2.pid
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 # Install packages (removed cron since it's managed by host)
 RUN apt update && \
