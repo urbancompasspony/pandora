@@ -38,7 +38,7 @@ update_status() {
     # Create JSON status for web interface
     cat > "$statusfile" << EOF
 {
-    "timestamp": "$(date '+%Y-%m-%d %H:%M:%S')",
+    "timestamp": "$(date '+%d-%m-%Y %H:%M')",
     "status": "running",
     "progress": {
         "current": $current_counter,
@@ -50,6 +50,49 @@ update_status() {
     "device": "$namepan"
 }
 EOF
+    
+    # Update web stats as well
+    update_web_stats
+}
+
+# Function to update web statistics
+update_web_stats() {
+    local today_pattern=$(date +"%d_%m_%y")
+    
+    if [ -n "$name" ]; then
+        # Durante execução: mostra progresso da execução atual
+        local test_count=1
+    else
+        # Fora de execução: mostra total do dia
+        local test_count=$(find /Pentests/Todos_os_Resultados -maxdepth 1 -type d -name "${today_pattern}*" 2>/dev/null | wc -l)
+    fi
+    
+    local vuln_count=$(find /Pentests/Ataque_Bem-Sucedido -name "RESUMO_*" -type f -newermt "$(date +%d-%m-%Y)" 2>/dev/null | wc -l)
+    local total_ips_scanned=0
+    
+    # Count total IPs scanned today
+    if [ -d "/Pentests/Todos_os_Resultados" ]; then
+        for dir in /Pentests/Todos_os_Resultados/${today_pattern}*; do
+            if [ -d "$dir" ]; then
+                local ip_count=$(find "$dir" -maxdepth 1 -type f -name "[0-9]*" 2>/dev/null | wc -l)
+                total_ips_scanned=$((total_ips_scanned + ip_count))
+            fi
+        done
+    fi
+    
+    cat > /Pentests/stats.json << EOF
+{
+    "tests_today": $test_count,
+    "vulnerabilities": $vuln_count,
+    "total_ips_scanned": $total_ips_scanned,
+    "last_update": "$(date '+%Y-%m-%d %H:%M:%S')",
+    "device": "$namepan",
+    "status": "active"
+}
+EOF
+    
+    chmod 644 /Pentests/stats.json
+    chown www-data:www-data /Pentests/stats.json
 }
 
 # Function to get current counter atomically
@@ -427,7 +470,8 @@ function init {
 
     # Initialize counter file
     echo "0" > "$counterfile"
-
+    update_web_stats
+    
     # Check dependencies
     check_dependencies
 
@@ -549,6 +593,7 @@ function init {
     echo "Cobertura: TCP 1-65535 + UDP Top 30 Critical" | tee -a "$tolog"
 
     # Clean up counter file
+    update_web_stats
     rm -f "$counterfile" "${counterfile}.lock"
 }
 
