@@ -70,24 +70,34 @@ if [ ! -f "/Pentests/index.html" ]; then
     </div>
     <script>
 function updateStatus() {
-    // Try to get stats from dedicated endpoint first
-    fetch("/stats.json")
+    // Try to get progress from status.json first (active scan data)
+    fetch("/status.json")
         .then(response => response.json())
-        .then(stats => {
+        .then(status => {
             const statusDiv = document.getElementById("status-info");
             
-            let statusClass = "safe";
-            let statusIcon = "✅";
+            let statusClass = "info";
+            let statusIcon = "🔍";
             
-            if (stats.vulnerabilities > 0) {
+            if (status.vulnerabilities > 0) {
                 statusClass = "vulnerable";
                 statusIcon = "🚨";
+            } else if (status.status === "running") {
+                statusClass = "warning";
+                statusIcon = "⚙️";
+            } else {
+                statusClass = "safe";
+                statusIcon = "✅";
             }
             
-            statusDiv.innerHTML = `<div class="${statusClass}">${statusIcon} Testes: ${stats.tests_today} | IPs: ${stats.total_ips_scanned} | Vulnerabilidades: ${stats.vulnerabilities}</div>`;
+            // Show progress in [current/total] format
+            const progress = `[${status.progress.current}/${status.progress.total}]`;
+            const currentTarget = status.current_target !== "N/A" ? ` - ${status.current_target}` : "";
+            
+            statusDiv.innerHTML = `<div class="${statusClass}">${statusIcon} Progresso: ${progress} | Vulnerabilidades: ${status.vulnerabilities}${currentTarget}</div>`;
         })
         .catch(err => {
-            // Fallback to directory listing method
+            // Fallback: try to get basic info from directory listing
             fetch("/Todos_os_Resultados/")
                 .then(response => response.text())
                 .then(data => {
@@ -112,6 +122,7 @@ function updateStatus() {
                         }
                     });
 
+                    // Check vulnerabilities
                     fetch("/Ataque_Bem-Sucedido/")
                         .then(vulnResponse => vulnResponse.text())
                         .then(vulnData => {
@@ -126,20 +137,20 @@ function updateStatus() {
                                 statusIcon = "🚨";
                             }
 
-                            statusDiv.innerHTML = `<div class="${statusClass}">${statusIcon} Testes: ${testCount} | Vulnerabilidades: ${vulnCount}</div>`;
+                            statusDiv.innerHTML = `<div class="${statusClass}">${statusIcon} Execuções: ${testCount} | Vulnerabilidades: ${vulnCount}</div>`;
                         })
                         .catch(vulnErr => {
-                            statusDiv.innerHTML = `<div class="info">🔍 Testes: ${testCount} | Verificando vulnerabilidades...</div>`;
+                            statusDiv.innerHTML = `<div class="info">🔍 Execuções: ${testCount} | Verificando vulnerabilidades...</div>`;
                         });
                 })
                 .catch(err => {
-                    document.getElementById("status-info").innerHTML = `<div class="warning">⚙️ Sistema executando scan...</div>`;
+                    document.getElementById("status-info").innerHTML = `<div class="warning">⚙️ Sistema inicializando...</div>`;
                 });
         });
 }
 
 updateStatus();
-setInterval(updateStatus, 30000);
+setInterval(updateStatus, 10000);
     </script>
 </body>
 </html>
