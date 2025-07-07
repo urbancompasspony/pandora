@@ -69,28 +69,52 @@ if [ ! -f "/Pentests/index.html" ]; then
         </div>
     </div>
     <script>
-        function updateStatus() {
+function updateStatus() {
+    // Try to get stats from dedicated endpoint first
+    fetch("/stats.json")
+        .then(response => response.json())
+        .then(stats => {
+            const statusDiv = document.getElementById("status-info");
+            
+            let statusClass = "safe";
+            let statusIcon = "✅";
+            
+            if (stats.vulnerabilities > 0) {
+                statusClass = "vulnerable";
+                statusIcon = "🚨";
+            }
+            
+            statusDiv.innerHTML = `<div class="${statusClass}">${statusIcon} Testes: ${stats.tests_today} | IPs: ${stats.total_ips_scanned} | Vulnerabilidades: ${stats.vulnerabilities}</div>`;
+        })
+        .catch(err => {
+            // Fallback to directory listing method
             fetch("/Todos_os_Resultados/")
                 .then(response => response.text())
                 .then(data => {
                     const statusDiv = document.getElementById("status-info");
 
-                    // Pegar data atual no formato DD_MM_YY
                     const today = new Date();
                     const day = String(today.getDate()).padStart(2, '0');
                     const month = String(today.getMonth() + 1).padStart(2, '0');
                     const year = String(today.getFullYear()).slice(-2);
                     const todayPattern = `${day}_${month}_${year}`;
 
-                    // Contar apenas testes de hoje
-                    const todayRegex = new RegExp(`${todayPattern}-\\d{2}:\\d{2}`, 'g');
-                    const testCount = (data.match(todayRegex) || []).length;
+                    // Count directories with today's pattern
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(data, 'text/html');
+                    const links = doc.querySelectorAll('a[href]');
+                    
+                    let testCount = 0;
+                    links.forEach(link => {
+                        const href = link.getAttribute('href');
+                        if (href && href.includes(todayPattern) && href.endsWith('/')) {
+                            testCount++;
+                        }
+                    });
 
-                    // Verificar vulnerabilidades através da rota específica
                     fetch("/Ataque_Bem-Sucedido/")
                         .then(vulnResponse => vulnResponse.text())
                         .then(vulnData => {
-                            // Contar vulnerabilidades (assumindo que há conteúdo quando há vulnerabilidades)
                             const vulnCount = vulnData.trim().length > 100 ?
                                 (vulnData.match(/RESUMO_/g) || []).length : 0;
 
@@ -105,17 +129,17 @@ if [ ! -f "/Pentests/index.html" ]; then
                             statusDiv.innerHTML = `<div class="${statusClass}">${statusIcon} Testes: ${testCount} | Vulnerabilidades: ${vulnCount}</div>`;
                         })
                         .catch(vulnErr => {
-                            // Se não conseguir acessar vulnerabilidades, mostrar apenas testes
                             statusDiv.innerHTML = `<div class="info">🔍 Testes: ${testCount} | Verificando vulnerabilidades...</div>`;
                         });
                 })
                 .catch(err => {
                     document.getElementById("status-info").innerHTML = `<div class="warning">⚙️ Sistema executando scan...</div>`;
                 });
-        }
+        });
+}
 
-        updateStatus();
-        setInterval(updateStatus, 30000);
+updateStatus();
+setInterval(updateStatus, 30000);
     </script>
 </body>
 </html>
