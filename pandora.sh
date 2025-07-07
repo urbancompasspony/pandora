@@ -34,12 +34,20 @@ update_status() {
     local total_ips=$2
     local vulnerabilities_found=$3
     local current_ip=${4:-"N/A"}
+    
+    # Determine status
+    local scan_status="running"
+    if [ "$current_ip" = "FINALIZADO" ] || [ "$current_counter" -eq "$total_ips" ]; then
+        scan_status="completed"
+        # Count actual vulnerabilities when completed
+        vulnerabilities_found=$(find /Pentests/Ataque_Bem-Sucedido -name "RESUMO_*" -type f 2>/dev/null | wc -l)
+    fi
 
     # Create JSON status for web interface
     cat > "$statusfile" << EOF
 {
     "timestamp": "$(date '+%d-%m-%Y %H:%M')",
-    "status": "running",
+    "status": "$scan_status",
     "progress": {
         "current": $current_counter,
         "total": $total_ips,
