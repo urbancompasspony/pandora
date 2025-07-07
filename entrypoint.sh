@@ -74,17 +74,46 @@ if [ ! -f "/Pentests/index.html" ]; then
                 .then(response => response.text())
                 .then(data => {
                     const statusDiv = document.getElementById("status-info");
-                    const testCount = (data.match(/href="/g) || []).length - 1;
-                    const vulnCount = (data.match(/RESUMO_/g) || []).length;
-                    let statusClass = "safe";
-                    let statusIcon = "✅";
-                    if (vulnCount > 0) { statusClass = "vulnerable"; statusIcon = "🚨"; }
-                    statusDiv.innerHTML = `<div class="${statusClass}">${statusIcon} Testes: ${testCount} | Vulnerabilidades: ${vulnCount}</div>`;
+
+                    // Pegar data atual no formato DD_MM_YY
+                    const today = new Date();
+                    const day = String(today.getDate()).padStart(2, '0');
+                    const month = String(today.getMonth() + 1).padStart(2, '0');
+                    const year = String(today.getFullYear()).slice(-2);
+                    const todayPattern = `${day}_${month}_${year}`;
+
+                    // Contar apenas testes de hoje
+                    const todayRegex = new RegExp(`${todayPattern}-\\d{2}:\\d{2}`, 'g');
+                    const testCount = (data.match(todayRegex) || []).length;
+
+                    // Verificar vulnerabilidades através da rota específica
+                    fetch("/Ataque_Bem-Sucedido/")
+                        .then(vulnResponse => vulnResponse.text())
+                        .then(vulnData => {
+                            // Contar vulnerabilidades (assumindo que há conteúdo quando há vulnerabilidades)
+                            const vulnCount = vulnData.trim().length > 100 ?
+                                (vulnData.match(/RESUMO_/g) || []).length : 0;
+
+                            let statusClass = "safe";
+                            let statusIcon = "✅";
+
+                            if (vulnCount > 0) {
+                                statusClass = "vulnerable";
+                                statusIcon = "🚨";
+                            }
+
+                            statusDiv.innerHTML = `<div class="${statusClass}">${statusIcon} Testes: ${testCount} | Vulnerabilidades: ${vulnCount}</div>`;
+                        })
+                        .catch(vulnErr => {
+                            // Se não conseguir acessar vulnerabilidades, mostrar apenas testes
+                            statusDiv.innerHTML = `<div class="info">🔍 Testes: ${testCount} | Verificando vulnerabilidades...</div>`;
+                        });
                 })
                 .catch(err => {
                     document.getElementById("status-info").innerHTML = `<div class="warning">⚙️ Sistema executando scan...</div>`;
                 });
         }
+
         updateStatus();
         setInterval(updateStatus, 30000);
     </script>
