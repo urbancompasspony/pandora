@@ -58,16 +58,8 @@ EOF
 # Function to update web statistics
 update_web_stats() {
     local today_pattern=$(date +"%d_%m_%y")
-    
-    if [ -n "$name" ]; then
-        # Durante execução: mostra progresso da execução atual
-        local test_count=1
-    else
-        # Fora de execução: mostra total do dia
-        local test_count=$(find /Pentests/Todos_os_Resultados -maxdepth 1 -type d -name "${today_pattern}*" 2>/dev/null | wc -l)
-    fi
-    
-    local vuln_count=$(find /Pentests/Ataque_Bem-Sucedido -name "RESUMO_*" -type f -newermt "$(date +%d-%m-%Y)" 2>/dev/null | wc -l)
+    local test_count=$(find /Pentests/Todos_os_Resultados -maxdepth 1 -type d -name "${today_pattern}*" 2>/dev/null | wc -l)
+    local vuln_count=$(find /Pentests/Ataque_Bem-Sucedido -name "RESUMO_*" -type f -newermt "today" 2>/dev/null | wc -l)
     local total_ips_scanned=0
     
     # Count total IPs scanned today
