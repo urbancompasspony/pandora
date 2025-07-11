@@ -399,7 +399,6 @@ EOF
     cat > /Pentests/script.js << 'EOF'
 // GLOBAL VARS
 let updateInterval;
-let isUpdateRunning = false;
 
 // UTILITY FUNCTIONS
 function getTodayPattern() {
@@ -517,16 +516,10 @@ function countIPFiles(directoryHTML) {
 
 // MAIN STATUS UPDATE FUNCTION
 function updateStatus() {
-    if (isUpdateRunning) {
-        console.log('⏭️ Update já em execução, pulando...');
-        return;
-    }
-
-    isUpdateRunning = true;
     console.log('🔄 Atualizando status...');
 
     // Try to get real-time status first
-    fetch("/status.json?" + new Date().getTime()) // Add cache busting
+    fetch("/status.json")
         .then(response => {
             if (!response.ok) throw new Error('Status file not found');
             return response.json();
@@ -538,9 +531,6 @@ function updateStatus() {
         .catch(err => {
             console.log('⚠️ Status real-time indisponível, usando fallback...');
             updateFallbackStatus();
-        })
-        .finally(() => {
-            isUpdateRunning = false;
         });
 }
 
@@ -601,8 +591,8 @@ function updateFallbackStatus() {
 
     // Fallback: Get info from directory listings
     Promise.all([
-        fetch("/Todos_os_Resultados/?" + new Date().getTime()).then(r => r.text()).catch(() => ""),
-        fetch("/Ataque_Bem-Sucedido/?" + new Date().getTime()).then(r => r.text()).catch(() => "")
+        fetch("/Todos_os_Resultados/").then(r => r.text()).catch(() => ""),
+        fetch("/Ataque_Bem-Sucedido/").then(r => r.text()).catch(() => "")
     ]).then(([resultsData, vulnData]) => {
 
         console.log('📂 Dados do diretório de resultados recebidos');
@@ -644,9 +634,6 @@ function updateFallbackStatus() {
         // Update counters
         updateCounters(ipTestCount, vulnCount);
         updateProgressBar(0, 1); // Unknown progress in fallback
-            }).finally(() => {
-        isUpdateRunning = false;
-    });
     });
 }
 
@@ -684,6 +671,39 @@ window.addEventListener('beforeunload', function() {
 EOF
 fi
 
+# Enhanced function to update web stats with IP counting - COUNT ALL IP FILES
+update_web_stats() {
+    if [ -d "/Pentests/Todos_os_Resultados" ]; then
+        echo "📊 Atualizando estatísticas web..."
+
+        # Count ALL IP files (including tcp/udp variants, ignoring control files)
+        local ip_count=0
+        if [ -d "/Pentests/Todos_os_Resultados" ]; then
+            # Find all files that start with IP pattern (including duplicates)
+            ip_count=$(find /Pentests/Todos_os_Resultados -type f -name "[0-9]*.[0-9]*.[0-9]*.[0-9]*" 2>/dev/null | wc -l)
+        fi
+
+        # Count vulnerabilities
+        local vuln_count=0
+        if [ -d "/Pentests/Ataque_Bem-Sucedido" ]; then
+            vuln_count=$(find /Pentests/Ataque_Bem-Sucedido -type f -name "RESUMO_*" 2>/dev/null | wc -l)
+        fi
+
+        # Create enhanced stats file
+        cat > /Pentests/stats.json << EOF
+{
+    "ip_tests_executed": $ip_count,
+    "vulnerabilities_found": $vuln_count,
+    "last_update": "$(date '+%Y-%m-%d %H:%M:%S')",
+    "status": "active",
+    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
+}
+EOF
+
+        echo "📊 Stats atualizados: $ip_count arquivos IP testados, $vuln_count vulnerabilidades"
+    fi
+}
+
 # Rest of the original script remains the same...
 # Set proper permissions for Apache
 chown -R www-data:www-data /Pentests
@@ -719,7 +739,8 @@ check_apache
 (
     while true; do
         check_apache
-        sleep 150  # Check every 2m 30s
+        update_web_stats
+        sleep 300  # Check every 5 minutes
     done
 ) &
 
