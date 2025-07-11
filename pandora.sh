@@ -26,6 +26,14 @@ counterfile="$pidfile/counter.txt"
 statustest=".teste.em.andamento"
 # Top 30 Critical UDP Ports for Corporate Black Box
 critical_udp_ports="53,67,68,88,123,137,138,161,162,514,520,1161,1434,1645,1646,1701,1812,1813,3074,4500,5060,5061,8161,10161,10162,69,1069,8069,500,27015"
+# Arquivo de controle de IPs testados
+tested_ips_file="$pidfile/controle_ips_testados"
+# Arquivo de controle de IPs pendentes
+pending_ips_file="$pidfile/controle_ips_pendentes"
+# Arquivo de controle de IPs falhas
+failed_ips_file="$pidfile/controle_ips_falhas"
+# Lock file para operacoes atomicas
+control_lock_file="$pidfile/controle.lock"
 ################################################################################
 
 # Function to update status for web interface
@@ -34,7 +42,7 @@ update_status() {
     local total_ips=$2
     local vulnerabilities_found=$3
     local current_ip=${4:-"N/A"}
-    
+
     # Determine status
     local scan_status="running"
     if [ "$current_ip" = "FINALIZADO" ] || [ "$current_counter" -eq "$total_ips" ]; then
@@ -58,41 +66,367 @@ update_status() {
     "device": "$namepan"
 }
 EOF
-    
+
     # Update web stats as well
     update_web_stats
 }
 
 # Function to update web statistics
 update_web_stats() {
-    local today_pattern=$(date +"%d_%m_%y")
-    local test_count=$(find /Pentests/Todos_os_Resultados -maxdepth 1 -type d -name "${today_pattern}*" 2>/dev/null | wc -l)
-    local vuln_count=$(find /Pentests/Ataque_Bem-Sucedido -name "RESUMO_*" -type f -newermt "today" 2>/dev/null | wc -l)
-    local total_ips_scanned=0
-    
+    local today_pattern
+    today_pattern=$(date +"%d_%m_%y")
+    local test_count
+    test_count=$(find /Pentests/Todos_os_Resultados -maxdepth 1 -type d -name "${today_pattern}*" 2>/dev/null | wc -l)
+    local vuln_count
+    vuln_count=$(find /Pentests/Ataque_Bem-Sucedido -name "RESUMO_*" -type f -newermt "today" 2>/dev/null | wc -l)
+    local total_ips_scanned
+    total_ips_scanned=0
+
     # Count total IPs scanned today
     if [ -d "/Pentests/Todos_os_Resultados" ]; then
-        for dir in /Pentests/Todos_os_Resultados/${today_pattern}*; do
+        for dir in /Pentests/Todos_os_Resultados/"${today_pattern}"*; do
             if [ -d "$dir" ]; then
-                local ip_count=$(find "$dir" -maxdepth 1 -type f -name "[0-9]*" 2>/dev/null | wc -l)
+                local ip_count
+                ip_count=$(find "$dir" -maxdepth 1 -type f -name "[0-9]*" 2>/dev/null | wc -l)
                 total_ips_scanned=$((total_ips_scanned + ip_count))
             fi
         done
     fi
-    
-    cat > /Pentests/stats.json << EOF
-{
-    "tests_today": $test_count,
-    "vulnerabilities": $vuln_count,
-    "total_ips_scanned": $total_ips_scanned,
-    "last_update": "$(date '+%Y-%m-%d %H:%M:%S')",
-    "device": "$namepan",
-    "status": "active"
-}
-EOF
-    
+
+    {
+        echo "{"
+        echo "    \"tests_today\": $test_count,"
+        echo "    \"vulnerabilities\": $vuln_count,"
+        echo "    \"total_ips_scanned\": $total_ips_scanned,"
+        echo "    \"last_update\": \"$(date '+%Y-%m-%d %H:%M:%S')\","
+        echo "    \"device\": \"$namepan\","
+        echo "    \"status\": \"active\""
+        echo "}"
+    } > /Pentests/stats.json
+
     chmod 644 /Pentests/stats.json
     chown www-data:www-data /Pentests/stats.json
+}
+
+# Funcão para adicionar IP como testado (thread-safe)
+mark_ip_as_tested() {
+    local ip=$1
+    local result=$2  # "success", "no_services", "host_down", "timeout", "network_error"
+    local details=${3:-""}  # Detalhes opcionais da falha
+
+    (
+        flock -x 200
+
+        # Adicionar ao arquivo de testados com timestamp, resultado e detalhes
+        echo "$(date '+%d/%m/%y %H:%M:%S') $ip $result $details" >> "$tested_ips_file"
+
+        # Remover das pendências se existir
+        if [ -f "$pending_ips_file" ]; then
+            grep -v "^$ip$" "$pending_ips_file" > "$pending_ips_file.tmp" 2>/dev/null || touch "$pending_ips_file.tmp"
+            mv "$pending_ips_file.tmp" "$pending_ips_file"
+        fi
+
+        # Estrategia de retry baseada no tipo de falha
+        case "$result" in
+            "host_down")
+                # Host down: retry mais cedo (equipamento pode ligar)
+                echo "$(date '+%d/%m/%y %H:%M:%S') $ip $result $details RETRY_6H" >> "$failed_ips_file"
+                ;;
+            "timeout")
+                # Timeout: retry depois de mais tempo (pode estar sobrecarregado)
+                echo "$(date '+%d/%m/%y %H:%M:%S') $ip $result $details RETRY_24H" >> "$failed_ips_file"
+                ;;
+            "network_error")
+                # Erro de rede: retry em horario diferente
+                echo "$(date '+%d/%m/%y %H:%M:%S') $ip $result $details RETRY_12H" >> "$failed_ips_file"
+                ;;
+        esac
+
+    ) 200>"$control_lock_file"
+}
+
+# Funcão para verificar se IP deve ser testado
+should_test_ip() {
+    local ip=$1
+
+    # Verificar se foi testado com sucesso recentemente
+    if is_ip_recently_tested "$ip" 48; then
+        local last_result
+        last_result=$(grep " $ip " "$tested_ips_file" | tail -1 | awk '{print $3}')
+
+        if [ "$last_result" = "success" ] || [ "$last_result" = "no_services" ]; then
+            echo "IP $ip testado recentemente com sucesso - pulando" | tee -a "$tolog"
+            return 1  # Não testar
+        fi
+    fi
+
+    # Verificar retry baseado no tipo de falha
+    if [ -f "$failed_ips_file" ]; then
+        local last_failure
+        last_failure=$(grep " $ip " "$failed_ips_file" | tail -1)
+
+        if [ -n "$last_failure" ]; then
+            local failure_date
+            failure_date=$(echo "$last_failure" | awk '{print $1}')
+            local failure_time
+            failure_time=$(echo "$last_failure" | awk '{print $2}')
+            local failure_type
+            failure_type=$(echo "$last_failure" | awk '{print $3}')
+            local retry_strategy
+            retry_strategy=$(echo "$last_failure" | awk '{print $NF}')
+
+            # Converter timestamp da falha
+            local failure_timestamp
+            failure_timestamp=$(date -d "$failure_date $failure_time" +%s 2>/dev/null)
+            local current_timestamp
+            current_timestamp=$(date +%s)
+            local hours_since_failure
+            hours_since_failure=$(( (current_timestamp - failure_timestamp) / 3600 ))
+
+            case "$retry_strategy" in
+                "RETRY_6H")
+                    if [ "$hours_since_failure" -lt 6 ]; then
+                        echo "IP $ip falhou ha ${hours_since_failure}h (host_down) - aguardando 6h" | tee -a "$tolog"
+                        return 1
+                    fi
+                    ;;
+                "RETRY_12H")
+                    if [ "$hours_since_failure" -lt 12 ]; then
+                        echo "IP $ip falhou ha ${hours_since_failure}h (network_error) - aguardando 12h" | tee -a "$tolog"
+                        return 1
+                    fi
+                    ;;
+                "RETRY_24H")
+                    if [ "$hours_since_failure" -lt 24 ]; then
+                        echo "IP $ip falhou ha ${hours_since_failure}h (timeout) - aguardando 24h" | tee -a "$tolog"
+                        return 1
+                    fi
+                    ;;
+            esac
+
+            echo "IP $ip elegivel para retry apos ${hours_since_failure}h (falha: $failure_type)" | tee -a "$tolog"
+        fi
+    fi
+
+    return 0  # Pode testar
+}
+
+# Funcão para detectar tipo de ambiente/horario
+detect_environment_context() {
+    local current_hour
+    current_hour=$(date +%H)
+
+    # Detectar se e horario comercial (7-18h)
+    if [ "$current_hour" -ge 7 ] && [ "$current_hour" -le 18 ]; then
+        echo "business_hours"
+    else
+        echo "after_hours"
+    fi
+}
+
+# Funcão avancada de verificacão de conectividade
+advanced_connectivity_check() {
+    local ip=$1
+
+    echo "Verificando conectividade avancada para $ip..." | tee -a "$tolog"
+
+    # Teste 1: Ping basico (ICMP)
+    if ping -c 1 -W 2 "$ip" >/dev/null 2>&1; then
+        echo "ICMP ping: OK" | tee -a "$tolog"
+        return 0  # Host responde
+    fi
+
+    # Teste 2: TCP ping em portas comuns (mesmo se ICMP bloqueado)
+    local common_ports="22 23 25 53 80 135 139 443 445 993 995 3389 5985 5986"
+
+    for port in $common_ports; do
+        if timeout 3 bash -c "</dev/tcp/$ip/$port" 2>/dev/null; then
+            echo "TCP ping porta $port: OK (ICMP possivelmente bloqueado)" | tee -a "$tolog"
+            return 0  # Host responde em TCP
+        fi
+    done
+
+    # Teste 3: Nmap host discovery (ultimo recurso)
+    if timeout 30 nmap -Pn -p 80,443,22,135 --max-retries 1 "$ip" 2>/dev/null | grep -q "Host is up"; then
+        echo "Nmap discovery: Host detectado" | tee -a "$tolog"
+        return 0
+    fi
+
+    echo "✗ Todos os testes falharam - host down ou inacessivel" | tee -a "$tolog"
+    return 1  # Host realmente down
+}
+
+# Funcão para verificar se IP ja foi testado nas ultimas X horas
+is_ip_recently_tested() {
+    local ip=$1
+    local hours_limit=${2:-24}  # Default 24h
+
+    if [ ! -f "$tested_ips_file" ]; then
+        return 1  # Não foi testado
+    fi
+
+    # Buscar ultima entrada do IP
+    local last_test
+    last_test=$(grep " $ip " "$tested_ips_file" | tail -1)
+
+    if [ -z "$last_test" ]; then
+        return 1  # Não encontrado
+    fi
+
+    # Extrair timestamp
+    local test_date
+    test_date=$(echo "$last_test" | awk '{print $1 " " $2}')
+
+    # Converter para timestamp Unix
+    local test_timestamp
+    test_timestamp=$(date -d "$test_date" +%s 2>/dev/null)
+
+    if [ -z "$test_timestamp" ]; then
+        return 1  # Erro na conversão
+    fi
+
+    # Calcular diferenca em horas
+    local current_timestamp
+    current_timestamp=$(date +%s)
+    local diff_hours
+    diff_hours=$(( (current_timestamp - test_timestamp) / 3600 ))
+
+    if [ "$diff_hours" -lt "$hours_limit" ]; then
+        return 0  # Foi testado recentemente
+    else
+        return 1  # Não foi testado recentemente
+    fi
+}
+
+# Funcão para adicionar IPs pendentes
+add_pending_ips() {
+    local ip_list_file=$1
+
+    (
+        flock -x 200
+
+        # Adicionar todos os IPs como pendentes se não estão testados
+        while read -r ip; do
+            if ! is_ip_recently_tested "$ip"; then
+                echo "$ip" >> "$pending_ips_file"
+            fi
+        done < "$ip_list_file"
+
+        # Remover duplicatas
+        if [ -f "$pending_ips_file" ]; then
+            sort -u "$pending_ips_file" -o "$pending_ips_file"
+        fi
+
+    ) 200>"$control_lock_file"
+}
+
+# Funcão para limpar arquivos de controle antigos
+cleanup_old_control_files() {
+    local days_limit=${1:-7}  # Default 7 dias
+
+    echo "Limpando registros de controle antigos (>$days_limit dias)..." | tee -a "$tolog"
+
+    # Limpar IPs testados antigos
+    if [ -f "$tested_ips_file" ]; then
+        local temp_file
+        temp_file=$(mktemp)
+
+        while read -r line; do
+            local test_date
+            test_date=$(echo "$line" | awk '{print $1}')
+            local test_timestamp
+            test_timestamp=$(date -d "$test_date" +%s 2>/dev/null)
+
+            if [ -n "$test_timestamp" ]; then
+                local current_timestamp
+                current_timestamp=$(date +%s)
+                local diff_days
+                diff_days=$(( (current_timestamp - test_timestamp) / 86400 ))
+
+                if [ "$diff_days" -lt "$days_limit" ]; then
+                    echo "$line" >> "$temp_file"
+                fi
+            fi
+        done < "$tested_ips_file"
+
+        mv "$temp_file" "$tested_ips_file" 2>/dev/null || rm -f "$temp_file"
+    fi
+
+    # Limpar falhas antigas
+    if [ -f "$failed_ips_file" ]; then
+        find "$failed_ips_file" -mtime +"$days_limit" -delete 2>/dev/null
+    fi
+}
+
+# Funcão para gerar relatorio de controle
+generate_control_report() {
+    local report_file="$pathtest/$name/relatorio_controle_ips.txt"
+
+    {
+        echo "=== RELATORIO DE CONTROLE DE IPs ==="
+        echo "Data: $(date)"
+        echo "Dispositivo: $namepan"
+        echo "====================================="
+        echo ""
+    } > "$report_file"
+
+    # Estatisticas gerais
+    local total_tested=0
+    local total_pending=0
+    local total_failed=0
+
+    if [ -f "$tested_ips_file" ]; then
+        total_tested=$(wc -l < "$tested_ips_file")
+    fi
+
+    if [ -f "$pending_ips_file" ]; then
+        total_pending=$(wc -l < "$pending_ips_file")
+    fi
+
+    if [ -f "$failed_ips_file" ]; then
+        total_failed=$(wc -l < "$failed_ips_file")
+    fi
+
+    {
+        echo "ESTATISTICAS:"
+        echo "IPs testados (total): $total_tested"
+        echo "IPs pendentes: $total_pending"
+        echo "IPs com falha: $total_failed"
+        echo ""
+    } >> "$report_file"
+
+    # IPs testados hoje
+    if [ -f "$tested_ips_file" ]; then
+        local today_pattern
+        today_pattern=$(date +"%d/%m/%y")
+        local tested_today
+        tested_today=$(grep -c "^$today_pattern" "$tested_ips_file")
+
+        {
+            echo "IPs testados hoje: $tested_today"
+            echo ""
+            echo "ÚLTIMOS 10 IPs TESTADOS:"
+        } >> "$report_file"
+
+        tail -10 "$tested_ips_file" >> "$report_file"
+        echo "" >> "$report_file"
+    fi
+
+    # IPs pendentes
+    if [ -f "$pending_ips_file" ] && [ "$total_pending" -gt 0 ]; then
+        echo "IPs PENDENTES PARA PRÓXIMA EXECUÇÃO:" >> "$report_file"
+        cat "$pending_ips_file" >> "$report_file"
+        echo "" >> "$report_file"
+    fi
+
+    # IPs com falha para retry
+    if [ -f "$failed_ips_file" ] && [ "$total_failed" -gt 0 ]; then
+        echo "IPs COM FALHA (PARA RETRY):" >> "$report_file"
+        tail -20 "$failed_ips_file" >> "$report_file"
+        echo "" >> "$report_file"
+    fi
+
+    echo "Relatorio de controle gerado: $report_file" | tee -a "$tolog"
 }
 
 # Function to get current counter atomically
@@ -134,7 +468,7 @@ check_dependencies() {
         echo "Instalando dependencias..." | tee -a "$tolog"
         apt-get update && apt-get install -y "${missing_deps[@]}"
 
-        if [ $? -ne 0 ]; then
+        if ! apt-get update && apt-get install -y "${missing_deps[@]}"; then
             echo "Erro ao instalar dependencias! Saindo..." | tee -a "$tolog"
             exit 1
         fi
@@ -143,7 +477,8 @@ check_dependencies() {
 
 # Function to adjust parallel jobs based on system load
 adjust_parallel_jobs() {
-    local current_load=$(uptime | awk '{print $10}' | cut -d',' -f1)
+    local current_load
+    current_load=$(uptime | awk '{print $10}' | cut -d',' -f1)
 
     if command -v bc &> /dev/null; then
         if (( $(echo "$current_load > 3.0" | bc -l) )); then
@@ -164,67 +499,6 @@ adjust_parallel_jobs() {
     fi
 }
 
-# Function to generate HTML report
-generate_html_report() {
-    local vuln_count=$(find "$vuln0" -type f -name "RESUMO_*" 2>/dev/null | wc -l)
-    local total_files=$(find "$pathtest/$name" -type f -name "[0-9]*" 2>/dev/null | wc -l)
-    local tcp_scan_count=$(find "$pathtest/$name" -type f -name "*_tcp_*" 2>/dev/null | wc -l)
-    local udp_scan_count=$(find "$pathtest/$name" -type f -name "*_udp_*" 2>/dev/null | wc -l)
-
-    cat > "$pathtest/$name/relatorio.html" << 'REPORTEOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Relatorio Black Box Pentest</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #0a0a0a; color: #e0e0e0; }
-        .header { background: linear-gradient(135deg, #800000 0%, #4a0000 100%); color: white; padding: 30px; border-radius: 10px; text-align: center; margin-bottom: 30px; }
-        .stats { background: #1a1a1a; border: 1px solid #333; padding: 15px; border-radius: 5px; margin: 10px 0; }
-        .vulnerable { background-color: #2d0000; border-left: 5px solid #ff4444; padding: 15px; border-radius: 5px; margin: 10px 0; }
-        .safe { background-color: #002d00; border-left: 5px solid #44ff44; padding: 15px; border-radius: 5px; margin: 10px 0; }
-        .warning { background-color: #2d2d00; border-left: 5px solid #ffff44; padding: 15px; border-radius: 5px; margin: 10px 0; }
-        a { color: #4499ff; text-decoration: none; font-weight: bold; }
-        a:hover { text-decoration: underline; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .blackbox-badge { background: #660000; color: white; padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Project Pandora - Black Box Edition</h1>
-        <h2>Penetration Testing Results</h2>
-        <span class="blackbox-badge">DOUBLE BLIND BLACK BOX</span>
-    </div>
-
-    <div class="grid">
-        <div class="stats">
-            <h3>Estatisticas de Scanning</h3>
-        </div>
-
-        <div class="stats">
-            <h3>Metodologia Black Box</h3>
-            <p><strong>TCP Ports:</strong> Full scan 1-65535</p>
-            <p><strong>UDP Ports:</strong> Top 30 criticas corporativas</p>
-            <p><strong>Scripts:</strong> vuln,safe,discovery</p>
-            <p><strong>Stealth Level:</strong> T2 (Firewall-friendly)</p>
-        </div>
-    </div>
-
-    <div class="warning">
-        <h3>Consideracoes Black Box</h3>
-        <p><strong>Cobertura:</strong> Este scan cobriu servicos expostos externamente</p>
-        <p><strong>Limitacoes:</strong> Aplicacoes web, autenticacao e logica de negocio requerem testes manuais</p>
-        <p><strong>Proximos passos:</strong> Manual enumeration, web app testing, social engineering</p>
-    </div>
-
-    <hr>
-    <p><em>Relatorio gerado automaticamente pelo Project Pandora - Black Box Edition</em></p>
-    <p><em>Este e um pentest automatizado. Testes manuais adicionais sao recomendados.</em></p>
-</body>
-</html>
-REPORTEOF
-}
-
 # Function to perform aggressive black box port scanning
 aggressive_black_box_scan() {
     local ip=$1
@@ -232,22 +506,84 @@ aggressive_black_box_scan() {
     local udp_results="$pathtest/$name/${ip}_udp_critical"
     local final_results="$pathtest/$name/$ip"
 
+    # Verificar se deve testar este IP
+    if ! should_test_ip "$ip"; then
+        return 1  # Pular este IP
+    fi
+
     # Get current counter atomically
-    local current_counter=$(get_counter)
-    local total_ips=$(cat "$toip1" | wc -l)
+    local current_counter
+    current_counter=$(get_counter)
+    local total_ips
+    total_ips=$(wc -l < "$toip1")
 
     echo "[$current_counter/$total_ips] BLACK BOX SCAN: $ip" | tee -a "$tolog"
-
-    # Update status for web interface
     update_status "$current_counter" "$total_ips" "0" "$ip"
 
-    # Phase 1: Full TCP port scan (1-65535) with firewall-friendly settings
-    echo "[$current_counter/$total_ips] TCP Full Scan (1-65535) - $ip..." | tee -a "$tolog"
-    nmap -Pn -sS -p 1-65535 --min-rate 1000 --max-retries 1 -T2 "$ip" | tee "$tcp_results"
+    # Verificacão avancada de conectividade
+    if ! advanced_connectivity_check "$ip"; then
+        echo "[$current_counter/$total_ips] IP $ip não acessivel - marcando como host_down" | tee -a "$tolog"
+        mark_ip_as_tested "$ip" "host_down" "no_connectivity"
+        {
+            echo "Host $ip inacessivel (multiplos testes falharam)"
+            echo "Testes realizados: ICMP ping, TCP ping (portas comuns), Nmap discovery"
+            echo "Resultado: Host down ou firewalled"
+        } > "$final_results"
+        return 1
+    fi
 
-    # Phase 2: Critical UDP ports with reduced rate for firewall compatibility
+    echo "[$current_counter/$total_ips] Host $ip acessivel - iniciando scan completo..." | tee -a "$tolog"
+
+    # Phase 1: Full TCP port scan com deteccão melhorada de timeout
+    echo "[$current_counter/$total_ips] TCP Full Scan (1-65535) - $ip..." | tee -a "$tolog"
+
+    local tcp_start_time
+    tcp_start_time=$(date +%s)
+
+    timeout 900 nmap -Pn -sS -p 1-65535 --min-rate 1000 --max-retries 1 -T2 "$ip" > "$tcp_results" 2>&1
+    local tcp_exit_code=$?
+
+    local tcp_end_time
+    tcp_end_time=$(date +%s)
+    local tcp_duration
+    tcp_duration=$((tcp_end_time - tcp_start_time))
+
+    if [ "$tcp_exit_code" -eq 124 ]; then
+        echo "[$current_counter/$total_ips] TCP scan timeout apos ${tcp_duration}s para $ip" | tee -a "$tolog"
+        mark_ip_as_tested "$ip" "timeout" "tcp_scan_${tcp_duration}s"
+        echo "TCP scan timeout apos $tcp_duration segundos" > "$final_results"
+        rm -f "$tcp_results" "$udp_results"
+        return 1
+    elif [ "$tcp_exit_code" -ne 0 ]; then
+        echo "[$current_counter/$total_ips] TCP scan erro (exit code: $tcp_exit_code) para $ip" | tee -a "$tolog"
+        mark_ip_as_tested "$ip" "network_error" "tcp_error_code_$tcp_exit_code"
+        echo "TCP scan error (exit code: $tcp_exit_code)" > "$final_results"
+        rm -f "$tcp_results" "$udp_results"
+        return 1
+    fi
+
+    echo "[$current_counter/$total_ips] TCP scan concluido em ${tcp_duration}s" | tee -a "$tolog"
+
+    # Phase 2: Critical UDP ports
     echo "[$current_counter/$total_ips] UDP Critical Corporate Scan - $ip..." | tee -a "$tolog"
-    nmap -Pn -sU -p "$critical_udp_ports" --min-rate 500 --max-retries 1 -T2 "$ip" | tee "$udp_results"
+
+    local udp_start_time
+    udp_start_time=$(date +%s)
+
+    timeout 600 nmap -Pn -sU -p "$critical_udp_ports" --min-rate 500 --max-retries 1 -T2 "$ip" > "$udp_results" 2>&1
+    local udp_exit_code=$?
+
+    local udp_end_time
+    udp_end_time=$(date +%s)
+    local udp_duration
+    udp_duration=$((udp_end_time - udp_start_time))
+
+    if [ "$udp_exit_code" -eq 124 ]; then
+        echo "[$current_counter/$total_ips] UDP scan timeout apos ${udp_duration}s - prosseguindo com TCP" | tee -a "$tolog"
+        echo "UDP scan timeout apos $udp_duration segundos - apenas resultados TCP" > "$udp_results"
+    else
+        echo "[$current_counter/$total_ips] UDP scan concluido em ${udp_duration}s" | tee -a "$tolog"
+    fi
 
     # Check if any ports were found open
     local tcp_open=false
@@ -255,12 +591,12 @@ aggressive_black_box_scan() {
     local open_tcp_ports=""
     local open_udp_ports=""
 
-    if grep -q "open" "$tcp_results"; then
+    if [ -f "$tcp_results" ] && grep -q "open" "$tcp_results"; then
         tcp_open=true
         open_tcp_ports=$(grep "open" "$tcp_results" | grep "tcp" | awk '{print $1}' | cut -d'/' -f1 | grep -E '^[0-9]+$' | sort -n | tr '\n' ',' | sed 's/,$//')
     fi
 
-    if grep -q "open" "$udp_results"; then
+    if [ -f "$udp_results" ] && grep -q "open" "$udp_results"; then
         udp_open=true
         open_udp_ports=$(grep "open" "$udp_results" | grep "udp" | awk '{print $1}' | cut -d'/' -f1 | grep -E '^[0-9]+$' | sort -n | tr '\n' ',' | sed 's/,$//')
     fi
@@ -269,12 +605,16 @@ aggressive_black_box_scan() {
         echo "[$current_counter/$total_ips] ALVO INTERESSANTE: $ip - Iniciando analise de vulnerabilidades..." | tee -a "$tolog"
 
         # Initialize final results file
-        echo "=== BLACK BOX PENETRATION TEST RESULTS ===" > "$final_results"
-        echo "Target: $ip" >> "$final_results"
-        echo "Scan Date: $(date)" >> "$final_results"
-        echo "Methodology: Double Blind Black Box" >> "$final_results"
-        echo "=============================================" >> "$final_results"
-        echo "" >> "$final_results"
+        {
+            echo "=== BLACK BOX PENETRATION TEST RESULTS ==="
+            echo "Target: $ip"
+            echo "Scan Date: $(date)"
+            echo "Methodology: Double Blind Black Box"
+            echo "TCP Scan Duration: ${tcp_duration}s"
+            echo "UDP Scan Duration: ${udp_duration}s"
+            echo "============================================="
+            echo ""
+        } > "$final_results"
 
         # Phase 3: Detailed vulnerability assessment on open TCP ports
         if [ "$tcp_open" = true ] && [ -n "$open_tcp_ports" ]; then
@@ -282,13 +622,13 @@ aggressive_black_box_scan() {
 
             if echo "$open_tcp_ports" | grep -qE '^[0-9]+(,[0-9]+)*$'; then
                 echo "=== TCP VULNERABILITY SCAN RESULTS ===" >> "$final_results"
-                nmap -Pn -sS -sV -sC --script vuln,safe,discovery,auth,brute --script-timeout 300s -T2 -p "$open_tcp_ports" "$ip" | tee -a "$final_results"
+                timeout 1800 nmap -Pn -sS -sV -sC --script vuln,safe,discovery,auth,brute --script-timeout 300s -T2 -p "$open_tcp_ports" "$ip" >> "$final_results" 2>&1
                 echo "" >> "$final_results"
             else
                 echo "Formato de portas TCP invalido para $ip: $open_tcp_ports" | tee -a "$tolog"
                 echo "Fazendo scan de servicos basicos como fallback..." | tee -a "$tolog"
                 echo "=== TCP SERVICE DETECTION (FALLBACK) ===" >> "$final_results"
-                nmap -Pn -sS -sV -sC --script safe -T2 "$ip" | tee -a "$final_results"
+                timeout 900 nmap -Pn -sS -sV -sC --script safe -T2 "$ip" >> "$final_results" 2>&1
                 echo "" >> "$final_results"
             fi
         fi
@@ -299,13 +639,13 @@ aggressive_black_box_scan() {
 
             if echo "$open_udp_ports" | grep -qE '^[0-9]+(,[0-9]+)*$'; then
                 echo "=== UDP VULNERABILITY SCAN RESULTS ===" >> "$final_results"
-                nmap -Pn -sU -sV -sC --script vuln,safe,discovery --script-timeout 300s -T2 -p "$open_udp_ports" "$ip" | tee -a "$final_results"
+                timeout 1200 nmap -Pn -sU -sV -sC --script vuln,safe,discovery --script-timeout 300s -T2 -p "$open_udp_ports" "$ip" >> "$final_results" 2>&1
                 echo "" >> "$final_results"
             else
                 echo "Formato de portas UDP invalido para $ip: $open_udp_ports" | tee -a "$tolog"
                 echo "Fazendo scan UDP limitado como fallback..." | tee -a "$tolog"
                 echo "=== UDP SERVICE DETECTION (FALLBACK) ===" >> "$final_results"
-                nmap -Pn -sU --script safe -T2 -p "$critical_udp_ports" "$ip" | tee -a "$final_results"
+                timeout 600 nmap -Pn -sU --script safe -T2 -p "$critical_udp_ports" "$ip" >> "$final_results" 2>&1
                 echo "" >> "$final_results"
             fi
         fi
@@ -315,138 +655,336 @@ aggressive_black_box_scan() {
             echo "[$current_counter/$total_ips] Reconnaissance adicional - $ip..." | tee -a "$tolog"
             echo "=== ADDITIONAL RECONNAISSANCE ===" >> "$final_results"
 
-            # OS Detection
-            nmap -Pn -O --osscan-guess -T2 "$ip" 2>/dev/null | grep -E "(OS|Device|Network Distance)" >> "$final_results" 2>/dev/null || echo "OS Detection: Failed" >> "$final_results"
+            # OS Detection com timeout
+            timeout 300 nmap -Pn -O --osscan-guess -T2 "$ip" 2>/dev/null | grep -E "(OS|Device|Network Distance)" >> "$final_results" 2>/dev/null || echo "OS Detection: Failed" >> "$final_results"
 
-            # Traceroute for network mapping
-            nmap -Pn --traceroute -T2 "$ip" 2>/dev/null | grep -A 20 "TRACEROUTE" >> "$final_results" 2>/dev/null || echo "Traceroute: Failed" >> "$final_results"
+            # Traceroute for network mapping com timeout
+            timeout 300 nmap -Pn --traceroute -T2 "$ip" 2>/dev/null | grep -A 20 "TRACEROUTE" >> "$final_results" 2>/dev/null || echo "Traceroute: Failed" >> "$final_results"
 
             echo "" >> "$final_results"
         fi
 
         # Clean up temp files
         rm -f "$tcp_results" "$udp_results"
+
+        # Marcar como testado com sucesso
+        mark_ip_as_tested "$ip" "success" "tcp_${tcp_duration}s_udp_${udp_duration}s"
         return 0
     else
         echo "[$current_counter/$total_ips] Host sem servicos expostos: $ip" | tee -a "$tolog"
-        echo "No accessible services found on $ip (Black Box Scan)" > "$final_results"
-        echo "TCP Scan: 1-65535 (No open ports)" >> "$final_results"
-        echo "UDP Scan: Critical 30 ports (No open ports)" >> "$final_results"
+        {
+            echo "No accessible services found on $ip (Black Box Scan)"
+            echo "TCP Scan: 1-65535 (No open ports) - Duration: ${tcp_duration}s"
+            echo "UDP Scan: Critical 30 ports (No open ports) - Duration: ${udp_duration}s"
+        } > "$final_results"
         rm -f "$tcp_results" "$udp_results"
+
+        # Marcar como testado sem servicos
+        mark_ip_as_tested "$ip" "no_services" "scanned_successfully"
         return 1
     fi
 }
 
-# Function to check for vulnerabilities with enhanced detection
+# Funcão para gerar relatorio detalhado de retry
+generate_retry_report() {
+    local report_file="$pathtest/$name/relatorio_retry_strategy.txt"
+
+    {
+        echo "=== RELATORIO DE ESTRATEGIA DE TENTATIVAS ==="
+        echo "Data: $(date)"
+        echo "Dispositivo: $namepan"
+        echo "============================================="
+        echo ""
+    } > "$report_file"
+
+    # Estatisticas por tipo de falha
+    if [ -f "$failed_ips_file" ]; then
+        {
+            echo "ESTATISTICAS DE FALHAS:"
+            echo "Host Down (RETRY_6H): $(grep -c 'RETRY_6H' "$failed_ips_file" 2>/dev/null || echo 0)"
+            echo "Network Error (RETRY_12H): $(grep -c 'RETRY_12H' "$failed_ips_file" 2>/dev/null || echo 0)"
+            echo "Timeout (RETRY_24H): $(grep -c 'RETRY_24H' "$failed_ips_file" 2>/dev/null || echo 0)"
+            echo ""
+            echo "PRÓXIMOS RETRIES AGENDADOS:"
+            echo "==========================="
+        } >> "$report_file"
+
+        local current_timestamp
+        current_timestamp=$(date +%s)
+
+        while read -r line; do
+            if [[ "$line" =~ RETRY_ ]]; then
+                local failure_date
+                failure_date=$(echo "$line" | awk '{print $1}')
+                local failure_time
+                failure_time=$(echo "$line" | awk '{print $2}')
+                local ip
+                ip=$(echo "$line" | awk '{print $3}')
+                local retry_type
+                retry_type=$(echo "$line" | awk '{print $NF}')
+
+                local failure_timestamp
+                failure_timestamp=$(date -d "$failure_date $failure_time" +%s 2>/dev/null)
+
+                if [ -n "$failure_timestamp" ]; then
+                    local retry_hours
+                    case "$retry_type" in
+                        "RETRY_6H") retry_hours=6 ;;
+                        "RETRY_12H") retry_hours=12 ;;
+                        "RETRY_24H") retry_hours=24 ;;
+                        *) retry_hours=24 ;;
+                    esac
+
+                    local retry_timestamp
+                    retry_timestamp=$((failure_timestamp + retry_hours * 3600))
+                    local retry_date
+                    retry_date=$(date -d "@$retry_timestamp" '+%d/%m/%y %H:%M')
+
+                    if [ "$retry_timestamp" -gt "$current_timestamp" ]; then
+                        echo "$ip - Retry em: $retry_date ($retry_type)" >> "$report_file"
+                    else
+                        echo "$ip - Pronto para retry agora ($retry_type)" >> "$report_file"
+                    fi
+                fi
+            fi
+        done < "$failed_ips_file"
+    fi
+
+    echo "" >> "$report_file"
+    echo "Relatorio de retry gerado: $report_file" | tee -a "$tolog"
+}
+
 check_vulnerabilities() {
     local vuln_found=1  # Default to no vulnerabilities found
 
-    echo "Analisando resultados para vulnerabilidades criticas..." | tee -a "$tolog"
+    echo "Analisando resultados para vulnerabilidades suspeitas..." | tee -a "$tolog"
 
     while read -r line; do
-    if [ -f "$pathtest/$name/$line" ]; then
-            if grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" > /dev/null; then
-                # Check if it's NOT a false positive
-                if ! grep -E "(NOT VULNERABLE|not vulnerable|Not vulnerable|NOT Exploitable|not exploitable|Not exploitable|State: NOT VULNERABLE|: Not vulnerable|Status: Not vulnerable)" "$pathtest/$name/$line" > /dev/null; then
+        if [ -f "$pathtest/$name/$line" ]; then
+
+            # PRIMEIRO: Verificar se ha vulnerabilidades REAIS
+            local vuln_detected=false
+            local vuln_summary=""
+            local vuln_details=""
+
+            # 1. CVEs com scores criticos (8.0+)
+            local critical_cves
+            critical_cves=$(grep -E "CVE-[0-9]{4}-[0-9]+.*([89]\.[0-9]|10\.0)" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$critical_cves" ]; then
+                vuln_detected=true
+                vuln_summary+="CVEs criticas detectadas (Score 8.0+)\n"
+                vuln_details+="CRITICAL CVEs:\n$critical_cves\n\n"
+            fi
+
+            # 2. Vulnerabilidades especificas extremamente criticas
+            local extreme_cves
+            extreme_cves=$(grep -E "(CVE-2020-1472|CVE-2017-7494|CVE-2015-0240|CVE-2024-38476|CVE-2024-38474|CVE-2023-3961)" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$extreme_cves" ]; then
+                vuln_detected=true
+                vuln_summary+="Vulnerabilidades conhecidas suspeitas\n"
+                vuln_details+="EXTREME CVEs:\n$extreme_cves\n\n"
+            fi
+
+            # 3. Exploits publicos disponiveis
+            local exploits
+            exploits=$(grep -E "\*EXPLOIT\*" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$exploits" ]; then
+                vuln_detected=true
+                vuln_summary+="Exploits publicos disponiveis\n"
+                vuln_details+="EXPLOITS:\n$exploits\n\n"
+            fi
+
+            # 4. Palavras-chave tradicionais de vulnerabilidade
+            local vuln_keywords
+            vuln_keywords=$(grep -E "(VULNERABLE|Exploitable|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$vuln_keywords" ]; then
+                vuln_detected=true
+                vuln_summary+="Status vulneravel confirmado por palavras-chave\n"
+                vuln_details+="VULN KEYWORDS:\n$vuln_keywords\n\n"
+            fi
+
+            # 5. CVEs medios e altos (4.0+)
+            local medium_cves
+            medium_cves=$(grep -E "CVE-[0-9]{4}-[0-9]+.*[4-7]\.[0-9]" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$medium_cves" ]; then
+                vuln_detected=true
+                vuln_summary+="CVEs medios/altos detectados (Score 4.0-7.9)\n"
+                vuln_details+="MEDIUM/HIGH CVEs:\n$medium_cves\n\n"
+            fi
+
+            # 6. Servicos criticos com CVEs
+            if grep -E "(Active Directory|Domain Controller|Samba.*smbd|LDAP.*Microsoft|Kerberos.*server)" "$pathtest/$name/$line" > /dev/null 2>&1; then
+                if grep -E "CVE-[0-9]{4}-[0-9]+" "$pathtest/$name/$line" > /dev/null 2>&1; then
+                    vuln_detected=true
+                    vuln_summary+="Servicos criticos com vulnerabilidades\n"
+                    local critical_services
+                    critical_services=$(grep -E "(Active Directory|Domain Controller|Samba.*smbd|LDAP.*Microsoft|Kerberos)" "$pathtest/$name/$line" 2>/dev/null || true)
+                    vuln_details+="CRITICAL SERVICES:\n$critical_services\n\n"
+                fi
+            fi
+
+            # SEGUNDO: So agora verificar falsos positivos - MAS SÓ SE REALMENTE NÃO HÁ VULNERABILIDADES
+            if [ "$vuln_detected" = true ]; then
+                # Verificar se as vulnerabilidades encontradas são reais ou falsos positivos
+                local false_positives
+                false_positives=$(grep -E "(NOT VULNERABLE|not vulnerable|Not vulnerable|NOT Exploitable|not exploitable|Not exploitable|State: NOT VULNERABLE|: Not vulnerable|Status: Not vulnerable)" "$pathtest/$name/$line" 2>/dev/null || true)
+
+                # Contar vulnerabilidades vs falsos positivos
+                local vuln_count
+                vuln_count=$(echo "$vuln_details" | wc -l)
+                local false_positive_count
+                false_positive_count=0
+                if [ -n "$false_positives" ]; then
+                    false_positive_count=$(echo "$false_positives" | wc -l)
+                fi
+
+                # Se ha mais vulnerabilidades que falsos positivos, considerar vulneravel
+                if [ "$vuln_count" -gt "$false_positive_count" ] || [ "$false_positive_count" -eq 0 ]; then
                     mkdir -p "$vuln0"
-                    
-                    # Copy the full scan result directly to vuln folder (no subfolder)
+
+                    # Copy the full scan result
                     cp "$pathtest/$name/$line" "$vuln0/${line}_scan.txt"
-                    
-                    # Generate detailed summary directly in vuln folder (no subfolder)
-                    echo "=== VULNERABILIDADE CRITICA ENCONTRADA ===" > "$vuln0/RESUMO_${line}.txt"
-                    echo "IP: $line" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "Data: $datetime2" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "Dispositivo: $namepan" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "Metodologia: Black Box Double Blind" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "VULNERABILIDADES DETECTADAS:" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "=============================" >> "$vuln0/RESUMO_${line}.txt"
-                    grep -E "(VULNERABLE|Exploitable|CVE-|EXPLOIT|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "CONTEXTO COMPLETO:" >> "$vuln0/RESUMO_${line}.txt"
-                    echo "==================" >> "$vuln0/RESUMO_${line}.txt"
+
+                    # Generate enhanced summary
+                    {
+                        echo "=== VULNERABILIDADE SUSPEITA ==="
+                        echo "IP: $line"
+                        echo "Data: $datetime2"
+                        echo "Dispositivo: $namepan"
+                        echo "Metodologia: Black Box Double Blind"
+                        echo ""
+                        echo "RESUMO DA DETECCAO:"
+                        echo "==================="
+                    } > "$vuln0/RESUMO_${line}.txt"
+
+                    echo -e "$vuln_summary" >> "$vuln0/RESUMO_${line}.txt"
+
+                    {
+                        echo ""
+                        echo "DETALHES DAS VULNERABILIDADES:"
+                        echo "=============================="
+                    } >> "$vuln0/RESUMO_${line}.txt"
+
+                    echo -e "$vuln_details" >> "$vuln0/RESUMO_${line}.txt"
+
+                    # Se ha falsos positivos, mencionar mas não descartar
+                    if [ -n "$false_positives" ]; then
+                        {
+                            echo "FALSOS POSITIVOS ENCONTRADOS (IGNORADOS):"
+                            echo "========================================="
+                        } >> "$vuln0/RESUMO_${line}.txt"
+
+                        echo "$false_positives" >> "$vuln0/RESUMO_${line}.txt"
+
+                        {
+                            echo ""
+                            echo "NOTA: Vulnerabilidades reais encontradas superam falsos positivos."
+                            echo ""
+                        } >> "$vuln0/RESUMO_${line}.txt"
+                    fi
+
+                    {
+                        echo "SCAN COMPLETO:"
+                        echo "=============="
+                    } >> "$vuln0/RESUMO_${line}.txt"
+
                     cat "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt"
 
                     vuln_found=0  # Vulnerabilities found
-                    echo "VULNERABILIDADE CRITICA DETECTADA em $line!" | tee -a "$tolog"
+                    echo "VULNERABILIDADE SUSPEITA DETECTADA em $line!" | tee -a "$tolog"
+                    echo "Resumo: $(echo -e "$vuln_summary" | tr '\n' ' ')" | tee -a "$tolog"
+
+                    if [ -n "$false_positives" ]; then
+                        echo "AVISO: Alguns falsos positivos ignorados - vulnerabilidades reais confirmadas." | tee -a "$tolog"
+                    fi
                 else
-                    echo "[$line] Resultado 'not vulnerable' ignorado (não é vulnerabilidade real)" | tee -a "$tolog"
+                    echo "[$line] Vulnerabilidades descartadas - muitos falsos positivos detectados" | tee -a "$tolog"
                 fi
+            else
+                echo "[$line] Nenhuma vulnerabilidade detectada" | tee -a "$tolog"
             fi
         fi
     done < "$toip1"
 
-    # Create an index file for better web navigation if vulnerabilities found
-    if [ "$vuln_found" -eq 0 ]; then
-        cat > "$vuln0/index.html" << 'HTMLEOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Vulnerabilidades Criticas - Project Pandora</title>
-    <meta charset="UTF-8">
-    <style>
-        body { font-family: "Courier New", monospace; background: #0a0a0a; color: #ff6666; margin: 20px; }
-        .header { background: #2d0000; border: 2px solid #ff0000; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-        .vuln-list { background: #1a0000; border: 1px solid #ff4444; padding: 15px; border-radius: 5px; }
-        a { color: #ff8888; text-decoration: none; font-weight: bold; display: block; margin: 5px 0; padding: 10px; background: #2d1111; border-radius: 3px; }
-        a:hover { background: #442222; color: #ffaaaa; }
-        .back-link { color: #00ffff; border: 1px solid #00ffff; text-align: center; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>VULNERABILIDADES CRITICAS DETECTADAS</h1>
-HTMLEOF
-
-        echo "        <p><strong>Scan Date:</strong> $datetime2</p>" >> "$vuln0/index.html"
-        echo "        <p><strong>Device:</strong> $namepan</p>" >> "$vuln0/index.html"
-
-        cat >> "$vuln0/index.html" << 'HTMLEOF'
-    </div>
-    <div class="vuln-list">
-        <h3>Arquivos de Vulnerabilidades:</h3>
-HTMLEOF
-
-        # List all vulnerability files
-        for file in "$vuln0"/*.txt; do
-            if [ -f "$file" ]; then
-                filename=$(basename "$file")
-                echo "        <a href=\"$filename\">$filename</a>" >> "$vuln0/index.html"
-            fi
-        done
-
-        cat >> "$vuln0/index.html" << 'HTMLEOF'
-    </div>
-    <br><a href="/" class="back-link">Voltar ao Dashboard</a>
-</body>
-</html>
-HTMLEOF
-    fi
-
     return $vuln_found
 }
 
-# Function to manage IP cache for black box environments
 manage_ip_cache() {
     # Create cache directory if it doesn't exist
     mkdir -p "$(dirname "$cachefile")"
 
-    # For black box, keep cache for 48 hours instead of 24
+    echo "Gerenciando controle de IPs testados..." | tee -a "$tolog"
+
+    # Limpar arquivos de controle antigos (7 dias)
+    cleanup_old_control_files 7
+
+    # Adicionar IPs atuais como pendentes se não foram testados
+    add_pending_ips "$toip1"
+
+    # Filtrar IPs ja testados nas ultimas 24h (ou usar IPs pendentes)
+    local filtered_file="$toip1.filtered"
+
+    # Primeiro, tentar usar IPs pendentes se existirem
+    if [ -f "$pending_ips_file" ] && [ -s "$pending_ips_file" ]; then
+        echo "Usando lista de IPs pendentes da execucão anterior..." | tee -a "$tolog"
+
+        # Verificar quais IPs pendentes ainda estão ativos
+        local active_pending
+        active_pending=$(mktemp)
+
+        while read -r pending_ip; do
+            if grep -q "^$pending_ip$" "$toip1"; then
+                echo "$pending_ip" >> "$active_pending"
+            fi
+        done < "$pending_ips_file"
+
+        # Se ha IPs pendentes ativos, usar eles
+        if [ -s "$active_pending" ]; then
+            mv "$active_pending" "$filtered_file"
+            local pending_count
+            pending_count=$(wc -l < "$filtered_file")
+            echo "Encontrados $pending_count IPs pendentes da execucão anterior." | tee -a "$tolog"
+        else
+            rm -f "$active_pending"
+            cp "$toip1" "$filtered_file"
+        fi
+    else
+        # Se não ha pendentes, filtrar por IPs não testados recentemente
+        true > "$filtered_file"
+
+        while read -r ip; do
+            if ! is_ip_recently_tested "$ip" 24; then
+                echo "$ip" >> "$filtered_file"
+            fi
+        done < "$toip1"
+    fi
+
+    # Aplicar filtro de cache antigo tambem (para compatibilidade)
     if [ -f "$cachefile" ]; then
         find "$cachefile" -mtime +2 -delete 2>/dev/null
+
+        if [ -f "$cachefile" ]; then
+            local temp_filtered
+            temp_filtered=$(mktemp)
+            grep -v -F -x -f "$cachefile" "$filtered_file" > "$temp_filtered" 2>/dev/null || cp "$filtered_file" "$temp_filtered"
+            mv "$temp_filtered" "$filtered_file"
+        fi
     fi
 
-    # Filter out recently scanned IPs
-    if [ -f "$cachefile" ]; then
-        echo "Removendo IPs escaneados nas ultimas 48h (Black Box Mode)..." | tee -a "$tolog"
-        local recent_count=$(wc -l < "$cachefile" 2>/dev/null || echo 0)
-        grep -v -F -x -f "$cachefile" "$toip1" > "$toip1.filtered" 2>/dev/null || cp "$toip1" "$toip1.filtered"
-        mv "$toip1.filtered" "$toip1"
-        echo "Cache: $recent_count IPs removidos da lista de scan." | tee -a "$tolog"
-    fi
+    # Mostrar estatisticas
+    local original_count
+    original_count=$(wc -l < "$toip1")
+    local filtered_count
+    filtered_count=$(wc -l < "$filtered_file")
+    local removed_count
+    removed_count=$((original_count - filtered_count))
 
-    # Add current IPs to cache
+    echo "Controle de IPs: $original_count descobertos, $removed_count ja testados, $filtered_count restantes." | tee -a "$tolog"
+
+    # Substituir lista original pela filtrada
+    mv "$filtered_file" "$toip1"
+
+    # Add current IPs to cache (manter compatibilidade)
     cat "$toip1" >> "$cachefile"
     sort -u "$cachefile" -o "$cachefile" 2>/dev/null
 }
@@ -476,7 +1014,7 @@ function init {
     # Initialize counter file
     echo "0" > "$counterfile"
     update_web_stats
-    
+
     # Check dependencies
     check_dependencies
 
@@ -489,7 +1027,9 @@ function init {
 
     # Generate IPs to analyze with improved discovery
     echo "Descobrindo hosts ativos na rede..." | tee -a "$tolog"
-    nmap -n -sn --min-rate 2000 $(hostname -I | awk '{print $1}')"/24" | grep "Nmap scan report" | awk '{print $5}' | tee "$toip"
+    local network_range
+    network_range=$(hostname -I | awk '{print $1}')
+    nmap -n -sn --min-rate 2000 "${network_range}/24" | grep "Nmap scan report" | awk '{print $5}' | tee "$toip"
 
     # Remove Blacklist IPs
     grep -v -F -x -f "/Data/blacklist" "$toip" | tee "$toip1"
@@ -517,12 +1057,12 @@ function init {
     total_ips=$lres
 
     echo "INICIANDO BLACK BOX PENETRATION TEST..." | tee -a "$tolog"
-    echo "Target Network: $(hostname -I | awk '{print $1}')/24" | tee -a "$tolog"
+    echo "Target Network: ${network_range}/24" | tee -a "$tolog"
     echo "Critical UDP Ports: $critical_udp_ports" | tee -a "$tolog"
 
     # Export functions and variables for parallel execution
-    export -f aggressive_black_box_scan get_counter update_status
-    export pathtest name tolog total_ips critical_udp_ports counterfile statusfile toip1
+    export -f aggressive_black_box_scan get_counter update_status should_test_ip advanced_connectivity_check mark_ip_as_tested is_ip_recently_tested
+    export pathtest name tolog total_ips critical_udp_ports counterfile statusfile toip1 tested_ips_file pending_ips_file failed_ips_file control_lock_file
 
     # Execute aggressive black box scanning
     cat "$toip1" | parallel -j "$RUNA" -k "aggressive_black_box_scan {} && echo 'CONCLUIDO: {}' || echo 'FALHOU: {}'"
@@ -547,18 +1087,18 @@ function init {
     fi
 
     # Enhanced vulnerability detection
-    echo "Analisando resultados para vulnerabilidades criticas..." | tee -a "$tolog"
+    echo "Analisando resultados para vulnerabilidades suspeitas..." | tee -a "$tolog"
     check_vulnerabilities
     vuln_result=$?
 
     sleep 1
 
+    # Generate control and retry reports
+    generate_control_report
+    generate_retry_report
+
     # Register some logs
     echo "Resultados completos em: $pathtest/$name" | tee -a "$tolog"
-
-    # Generate comprehensive HTML report
-    echo "Gerando relatorio Black Box HTML..." | tee -a "$tolog"
-    generate_html_report
 
     sleep 1
 
@@ -584,16 +1124,16 @@ function init {
 
     if [ "$tontfy" != "0" ]; then
         if [ "$vuln_result" -eq 0 ]; then
-            echo "ALERTA: Enviando notificacao de vulnerabilidades criticas..." | tee -a "$tolog"
-            curl -u admin:5V06auso -T "$zipfiles"/"$name".zip -H "Filename: $name.zip" -H "Title: VULNERABILIDADES CRITICAS - BLACK BOX - $namepan" -H "Priority: urgent" "$ntfysh"/"$namepan"
+            echo "ALERTA: Enviando notificacao de vulnerabilidades suspeitas..." | tee -a "$tolog"
+            curl -u admin:5V06auso -T "$zipfiles"/"$name".zip -H "Filename: $name.zip" -H "Title: VULNERABILIDADES SUSPEITAS - BLACK BOX - $namepan" -H "Priority: urgent" "$ntfysh"/"$namepan"
         else
             echo "Enviando notificacao - Black Box scan concluido." | tee -a "$tolog"
-            curl -u admin:5V06auso -d "Black Box Pentest concluido em $namepan. $lres IPs testados. TCP: 1-65535, UDP: Top 30 criticas. Nenhuma vulnerabilidade critica detectada." -H "Title: Black Box Scan Concluido - $namepan" "$ntfysh"/"$namepan"
+            curl -u admin:5V06auso -d "Black Box Pentest concluido em $namepan. $lres IPs testados. TCP: 1-65535, UDP: Top 30 criticas. Nenhuma vulnerabilidade suspeita detectada." -H "Title: Black Box Scan Concluido - $namepan" "$ntfysh"/"$namepan"
         fi
     fi
 
     echo "BLACK BOX PENETRATION TEST FINALIZADO!" | tee -a "$tolog"
-    echo "Relatorio HTML: $pathtest/$name/relatorio.html" | tee -a "$tolog"
+    echo "Relatorio HTML disponivel via web interface" | tee -a "$tolog"
     echo "Metodologia: Double Blind Black Box Complete" | tee -a "$tolog"
     echo "Cobertura: TCP 1-65535 + UDP Top 30 Critical" | tee -a "$tolog"
 
