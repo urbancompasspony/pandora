@@ -81,6 +81,10 @@ update_web_stats() {
     vuln_count=$(find /Pentests/Ataque_Bem-Sucedido -name "RESUMO_*" -type f -newermt "today" 2>/dev/null | wc -l)
     local total_ips_scanned
     total_ips_scanned=0
+    local test_count_48h=0
+    local vuln_count_48h=0
+    local yesterday_pattern
+    yesterday_pattern=$(date -d "yesterday" +"%d_%m_%y")
 
     # Count total IPs scanned today
     if [ -d "/Pentests/Todos_os_Resultados" ]; then
@@ -93,11 +97,21 @@ update_web_stats() {
         done
     fi
 
+    if [ -d "/Pentests/Todos_os_Resultados" ]; then
+        # Hoje
+        test_count_48h=$(find /Pentests/Todos_os_Resultados -maxdepth 1 -type d -name "${today_pattern}*" 2>/dev/null | wc -l)
+        # Ontem
+        local yesterday_count
+        yesterday_count=$(find /Pentests/Todos_os_Resultados -maxdepth 1 -type d -name "${yesterday_pattern}*" 2>/dev/null | wc -l)
+        test_count_48h=$((test_count_48h + yesterday_count))
+    fi
+
+    vuln_count_48h=$(find /Pentests/Ataque_Bem-Sucedido -name "RESUMO_*" -type f -newermt "48 hours ago" 2>/dev/null | wc -l)
+
     {
         echo "{"
-        echo "    \"tests_today\": $test_count,"
-        echo "    \"vulnerabilities\": $vuln_count,"
-        echo "    \"total_ips_scanned\": $total_ips_scanned,"
+        echo "    \"tests_48h\": $test_count_48h,"
+        echo "    \"vulnerabilities_48h\": $vuln_count_48h,"
         echo "    \"last_update\": \"$(date '+%Y-%m-%d %H:%M:%S')\","
         echo "    \"device\": \"$namepan\","
         echo "    \"status\": \"active\""
@@ -326,30 +340,12 @@ cleanup_old_control_files() {
 
     echo "Limpando registros de controle antigos (>$days_limit dias)..." | tee -a "$tolog"
 
-    # Limpar IPs testados antigos
     if [ -f "$tested_ips_file" ]; then
-        local temp_file
-        temp_file=$(mktemp)
-
-        while read -r line; do
-            local test_date
-            test_date=$(echo "$line" | awk '{print $1}')
-            local test_timestamp
-            test_timestamp=$(date -d "$test_date" +%s 2>/dev/null)
-
-            if [ -n "$test_timestamp" ]; then
-                local current_timestamp
-                current_timestamp=$(date +%s)
-                local diff_days
-                diff_days=$(( (current_timestamp - test_timestamp) / 86400 ))
-
-                if [ "$diff_days" -lt "$days_limit" ]; then
-                    echo "$line" >> "$temp_file"
-                fi
-            fi
-        done < "$tested_ips_file"
-
-        mv "$temp_file" "$tested_ips_file" 2>/dev/null || rm -f "$temp_file"
+        # Criar backup se arquivo muito grande
+        if [ $(wc -l < "$tested_ips_file") -gt 10000 ]; then
+            mv "$tested_ips_file" "${tested_ips_file}.backup.$(date +%Y%m%d)"
+            touch "$tested_ips_file"
+        fi
     fi
 
     # Limpar falhas antigas
@@ -891,7 +887,7 @@ check_vulnerabilities() {
                     cat "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt"
 
                     vuln_found=0  # Vulnerabilities found
-                    echo "VULNERABILIDADE SUSPEITA DETECTADA em $line!" | tee -a "$tolog"
+                    echo "POSSÍVEL VULNERABILIDADE DETECTADA em $line!" | tee -a "$tolog"
                     echo "Resumo: $(echo -e "$vuln_summary" | tr '\n' ' ')" | tee -a "$tolog"
 
                     if [ -n "$false_positives" ]; then
@@ -953,7 +949,7 @@ manage_ip_cache() {
         true > "$filtered_file"
 
         while read -r ip; do
-            if ! is_ip_recently_tested "$ip" 24; then
+            if ! is_ip_recently_tested "$ip" 48; then
                 echo "$ip" >> "$filtered_file"
             fi
         done < "$toip1"
@@ -1113,10 +1109,10 @@ function init {
 
     # Remove old Files with better cleanup
     echo "Limpando arquivos antigos..." | tee -a "$tolog"
-    find "$vuln0" -type f -mtime +3 -delete 2>/dev/null
-    find "$pathtest" -type d -mtime +3 -exec rm -rf {} + 2>/dev/null
+    find "$vuln0" -type f -mtime +7 -delete 2>/dev/null
+    find "$pathtest" -type d -mtime +5 -exec rm -rf {} + 2>/dev/null
     find "$pathtest" -type d -empty -delete 2>/dev/null
-    find "$zipfiles" -type f -mtime +15 -delete 2>/dev/null
+    find "$zipfiles" -type f -mtime +30 -delete 2>/dev/null
 
     # Send message with attachments
     sleep 1
@@ -1125,10 +1121,10 @@ function init {
     if [ "$tontfy" != "0" ]; then
         if [ "$vuln_result" -eq 0 ]; then
             echo "ALERTA: Enviando notificacao de vulnerabilidades suspeitas..." | tee -a "$tolog"
-            curl -u admin:5V06auso -T "$zipfiles"/"$name".zip -H "Filename: $name.zip" -H "Title: VULNERABILIDADES SUSPEITAS - BLACK BOX - $namepan" -H "Priority: urgent" "$ntfysh"/"$namepan"
+            curl -u admin:5V06auso -T "$zipfiles"/"$name".zip -H "Filename: $name.zip" -H "Title: POSSÍVEIS VULNERABILIDADES - BLACK BOX - $namepan" -H "Priority: urgent" "$ntfysh"/"$namepan"
         else
             echo "Enviando notificacao - Black Box scan concluido." | tee -a "$tolog"
-            curl -u admin:5V06auso -d "Black Box Pentest concluido em $namepan. $lres IPs testados. TCP: 1-65535, UDP: Top 30 criticas. Nenhuma vulnerabilidade suspeita detectada." -H "Title: Black Box Scan Concluido - $namepan" "$ntfysh"/"$namepan"
+            curl -u admin:5V06auso -d "Black Box Pentest concluido em $namepan. $lres IPs testados. TCP: 1-65535, UDP: Top 30 criticas. Nenhuma possível vulnerabilidade detectada." -H "Title: Black Box Scan Concluido - $namepan" "$ntfysh"/"$namepan"
         fi
     fi
 

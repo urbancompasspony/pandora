@@ -48,7 +48,7 @@ if [ ! -f "/Pentests/index.html" ]; then
                     </a>
                     <a href="/Ataque_Bem-Sucedido/" class="card-link critical">
                         <span class="link-icon">⚠️</span>
-                        <span class="link-text">Vulnerabilidades Detectadas</span>
+                        <span class="link-text">Possíveis Vulnerabilidades</span>
                         <span class="link-badge critical" id="vuln-count">0</span>
                     </a>
                 </div>
@@ -431,18 +431,17 @@ function updateProgressBar(current, total) {
 }
 
 function updateCounters(testCount, vulnCount) {
-    let completedTests = 0; // Declarar fora do if
-
+    // Update total tests - remove the -1 adjustment that was causing incorrect counting
     const totalTestsElement = document.getElementById('total-tests');
     if (totalTestsElement) {
         if (testCount > 0) {
-            completedTests = Math.max(0, testCount - 1);
-            totalTestsElement.textContent = completedTests;
+            // Remove the problematic -1 adjustment
+            totalTestsElement.textContent = testCount;
         } else {
             fetch("/Todos_os_Resultados/")
                 .then(r => r.text())
                 .then(html => {
-                    completedTests = countIPFiles(html);
+                    const completedTests = countIPFiles(html);
                     totalTestsElement.textContent = completedTests;
                 })
                 .catch(() => {
@@ -451,35 +450,77 @@ function updateCounters(testCount, vulnCount) {
         }
     }
 
-    // Update vulnerability badge
+    // Update vulnerability badge - count RESUMO files properly
     const vulnBadge = document.getElementById('vuln-count');
     if (vulnBadge) {
-        vulnBadge.textContent = vulnCount;
+        // If vulnCount not provided or is 0, get real count from directory
+        if (vulnCount === 0 || vulnCount === undefined) {
+            fetch("/Ataque_Bem-Sucedido/")
+                .then(r => r.text())
+                .then(html => {
+                    const realVulnCount = countResumoFiles(html);
+                    vulnBadge.textContent = realVulnCount;
 
-        if (vulnCount > 0) {
-            vulnBadge.style.display = 'inline-block';
+                    if (realVulnCount > 0) {
+                        vulnBadge.style.display = 'inline-block';
+                    } else {
+                        vulnBadge.style.display = 'none';
+                    }
+                })
+                .catch(() => {
+                    vulnBadge.textContent = 0;
+                    vulnBadge.style.display = 'none';
+                });
         } else {
-            vulnBadge.style.display = 'none';
+            vulnBadge.textContent = vulnCount;
+            if (vulnCount > 0) {
+                vulnBadge.style.display = 'inline-block';
+            } else {
+                vulnBadge.style.display = 'none';
+            }
         }
     }
 
-    console.log(`📊 Stats: ${completedTests} files completed, ${vulnCount} vulnerabilities`);
+    console.log(`📊 Stats atualizados: ${testCount} testes, ${vulnCount} vulnerabilidades`);
 }
 
-// IMPROVED IP FILE COUNTING FUNCTION - COUNT ALL IP FILES INCLUDING DUPLICATES
+// Count RESUMO files specifically
+function countResumoFiles(directoryHTML) {
+    if (!directoryHTML) return 0;
+
+    console.log('🔍 Contando arquivos RESUMO_*.txt...');
+
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = directoryHTML;
+    const links = tempDiv.querySelectorAll('a');
+    const resumoFiles = [];
+
+    links.forEach((link) => {
+        const fileName = link.textContent.trim();
+
+        // Count files that start with RESUMO_ and end with .txt
+        if (fileName.match(/^RESUMO_.*\.txt$/)) {
+            resumoFiles.push(fileName);
+            console.log(`✅ Arquivo RESUMO encontrado: "${fileName}"`);
+        }
+    });
+
+    const count = resumoFiles.length;
+    console.log(`📊 Total de arquivos RESUMO encontrados: ${count}`);
+
+    return count;
+}
+
+// IMPROVED IP FILE COUNTING FUNCTION - COUNT DIRECTORIES NOT FILES
 function countIPFiles(directoryHTML) {
     if (!directoryHTML) return 0;
 
-    console.log('🔍 Analisando conteúdo do diretório para contar arquivos IP...');
-    console.log('📄 HTML recebido:', directoryHTML.substring(0, 500) + '...');
+    console.log('🔍 Analisando conteúdo do diretório para contar diretórios de teste...');
 
-    // Create a temporary div to parse HTML
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = directoryHTML;
-
-    // Get all links in the directory listing
     const links = tempDiv.querySelectorAll('a');
-    const ipFiles = []; // Use array to count all files including duplicates
+    const testDirectories = [];
 
     console.log(`🔗 Total de links encontrados: ${links.length}`);
 
@@ -487,7 +528,7 @@ function countIPFiles(directoryHTML) {
         const fileName = link.textContent.trim();
         const href = link.getAttribute('href') || '';
 
-        console.log(`📄 [${index}] Verificando: "${fileName}" (href: "${href}")`);
+        console.log(`📁 [${index}] Verificando: "${fileName}" (href: "${href}")`);
 
         // Skip parent directory links and empty entries
         if (fileName === '../' || fileName === '' || href === '../') {
@@ -495,21 +536,18 @@ function countIPFiles(directoryHTML) {
             return;
         }
 
-        // Check if file/folder name starts with IP pattern (IP followed by numbers and dots)
-        // Match patterns like: 172.20.0.102, 172.20.0.102_tcp_full, 172.20.0.102_udp_critical
-        if (fileName.match(/^(\d{1,3}\.){3}\d{1,3}/)) {
-            ipFiles.push(fileName);
-            console.log(`✅ Arquivo IP válido encontrado: "${fileName}"`);
-        } else if (fileName.match(/^(01_|02_|03_|04_)/)) {
-            console.log(`🚫 Arquivo de controle ignorado: "${fileName}"`);
+        // Match test directory pattern: DD_MM_YY-HH:MM
+        if (fileName.match(/^\d{2}_\d{2}_\d{2}-\d{2}:\d{2}\/$/)) {
+            testDirectories.push(fileName);
+            console.log(`✅ Diretório de teste válido encontrado: "${fileName}"`);
         } else {
-            console.log(`❌ Arquivo ignorado (não é IP): "${fileName}"`);
+            console.log(`❌ Ignorado (não é diretório de teste): "${fileName}"`);
         }
     });
 
-    const count = ipFiles.length;
-    console.log(`📊 Total de arquivos IP encontrados (incluindo duplicatas): ${count}`);
-    console.log(`📋 Arquivos IP encontrados:`, ipFiles);
+    const count = testDirectories.length;
+    console.log(`📊 Total de diretórios de teste encontrados: ${count}`);
+    console.log(`📋 Diretórios encontrados:`, testDirectories);
 
     return count;
 }
@@ -544,7 +582,7 @@ function updateRealTimeStatus(status) {
     if (status.vulnerabilities > 0) {
         statusClass = "vulnerable";
         statusIcon = "🚨";
-        statusText = `VULNERABILIDADES CRÍTICAS DETECTADAS: ${status.vulnerabilities}`;
+        statusText = `POSSÍVEIS VULNERABILIDADES CRÍTICAS: ${status.vulnerabilities}`;
     } else if (status.status === "running") {
         statusClass = "warning";
         statusIcon = "⚙️";
@@ -597,14 +635,13 @@ function updateFallbackStatus() {
 
         console.log('📂 Dados do diretório de resultados recebidos');
 
-        // Count IP files using improved function
-        const ipTestCount = countIPFiles(resultsData);
+        // Count test directories (not IP files)
+        const testDirectoriesCount = countIPFiles(resultsData);
 
-        // Count vulnerabilities
-        const vulnMatches = vulnData.match(/RESUMO_/g) || [];
-        const vulnCount = vulnMatches.length;
+        // Count RESUMO files specifically
+        const vulnCount = countResumoFiles(vulnData);
 
-        console.log(`📊 Fallback stats: ${ipTestCount} arquivos IP testados, ${vulnCount} vulnerabilidades`);
+        console.log(`📊 Fallback stats: ${testDirectoriesCount} diretórios de teste, ${vulnCount} vulnerabilidades`);
 
         // Update main status
         let statusClass = "info";
@@ -614,11 +651,11 @@ function updateFallbackStatus() {
         if (vulnCount > 0) {
             statusClass = "vulnerable";
             statusIcon = "🚨";
-            statusText = `${vulnCount} VULNERABILIDADES DETECTADAS`;
-        } else if (ipTestCount > 0) {
+            statusText = `${vulnCount} POSSÍVEIS VULNERABILIDADES`;
+        } else if (testDirectoriesCount > 0) {
             statusClass = "safe";
             statusIcon = "✅";
-            statusText = `${ipTestCount} ARQUIVOS IP TESTADOS - SISTEMA SEGURO`;
+            statusText = `${testDirectoriesCount} TESTES EXECUTADOS - SISTEMA SEGURO`;
         } else {
             statusIcon = "🔍";
             statusText = "SISTEMA ATIVO - NENHUM TESTE EXECUTADO";
@@ -629,10 +666,10 @@ function updateFallbackStatus() {
         // Update progress info (fallback mode)
         document.getElementById('scan-status').textContent = "Standby";
         document.getElementById('current-target').textContent = "N/A";
-        document.getElementById('scan-progress').textContent = `${ipTestCount}/∞`;
+        document.getElementById('scan-progress').textContent = `${testDirectoriesCount}/∞`;
 
-        // Update counters
-        updateCounters(ipTestCount, vulnCount);
+        // Update counters with correct values
+        updateCounters(testDirectoriesCount, vulnCount);
         updateProgressBar(0, 1); // Unknown progress in fallback
     });
 }
