@@ -48,7 +48,7 @@ if [ ! -f "/Pentests/index.html" ]; then
                     </a>
                     <a href="/Ataque_Bem-Sucedido/" class="card-link critical">
                         <span class="link-icon">⚠️</span>
-                        <span class="link-text">Possíveis Vulnerabilidades</span>
+                        <span class="link-text">Possiveis Vulnerabilidades</span>
                         <span class="link-badge critical" id="vuln-count">0</span>
                     </a>
                 </div>
@@ -89,9 +89,9 @@ if [ ! -f "/Pentests/index.html" ]; then
 
             <div class="card warning">
                 <h3>⚠️ Aviso Legal</h3>
-                <p><strong>Este é um teste de penetração automatizado.</strong></p>
-                <p>Resultados são baseados em scanning automático e podem não refletir todos os vetores de ataque possíveis.</p>
-                <p><em>Testes manuais adicionais são recomendados para validação completa.</em></p>
+                <p><strong>Este e um teste de penetracao automatizado.</strong></p>
+                <p>Resultados sao baseados em scanning automatico e podem nao refletir todos os vetores de ataque possiveis.</p>
+                <p><em>Testes manuais adicionais sao recomendados para validacao completa.</em></p>
             </div>
         </div>
 
@@ -515,7 +515,7 @@ function countResumoFiles(directoryHTML) {
 function countIPFiles(directoryHTML) {
     if (!directoryHTML) return 0;
 
-    console.log('🔍 Analisando conteúdo do diretório para contar diretórios de teste...');
+    console.log('🔍 Analisando conteudo do diretorio para contar diretorios de teste...');
 
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = directoryHTML;
@@ -532,22 +532,22 @@ function countIPFiles(directoryHTML) {
 
         // Skip parent directory links and empty entries
         if (fileName === '../' || fileName === '' || href === '../') {
-            console.log(`⬆️ Ignorado: link para diretório pai`);
+            console.log(`⬆️ Ignorado: link para diretorio pai`);
             return;
         }
 
         // Match test directory pattern: DD_MM_YY-HH:MM
         if (fileName.match(/^\d{2}_\d{2}_\d{2}-\d{2}:\d{2}\/$/)) {
             testDirectories.push(fileName);
-            console.log(`✅ Diretório de teste válido encontrado: "${fileName}"`);
+            console.log(`✅ Diretorio de teste valido encontrado: "${fileName}"`);
         } else {
-            console.log(`❌ Ignorado (não é diretório de teste): "${fileName}"`);
+            console.log(`❌ Ignorado (nao e diretorio de teste): "${fileName}"`);
         }
     });
 
     const count = testDirectories.length;
-    console.log(`📊 Total de diretórios de teste encontrados: ${count}`);
-    console.log(`📋 Diretórios encontrados:`, testDirectories);
+    console.log(`📊 Total de diretorios de teste encontrados: ${count}`);
+    console.log(`📋 Diretorios encontrados:`, testDirectories);
 
     return count;
 }
@@ -567,13 +567,14 @@ function updateStatus() {
             updateRealTimeStatus(status);
         })
         .catch(err => {
-            console.log('⚠️ Status real-time indisponível, usando fallback...');
+            console.log('⚠️ Status real-time indisponivel, usando fallback...');
             updateFallbackStatus();
         });
 }
 
 function updateRealTimeStatus(status) {
     document.getElementById('total-tests').textContent = status.progress.current;
+
     // Update main status banner
     let statusClass = "info";
     let statusIcon = "🔍";
@@ -593,15 +594,15 @@ function updateRealTimeStatus(status) {
         statusText = "SCAN COMPLETO - NENHUMA VULNERABILIDADE CRÍTICA";
     } else {
         statusIcon = "🔍";
-        statusText = "SISTEMA ATIVO - AGUARDANDO COMANDOS";
+        statusText = "SISTEMA ATIVO - AGUARDANDO INICIO";
     }
 
     setMainStatus(statusIcon, statusText, statusClass);
 
     // Update progress information
     document.getElementById('scan-status').textContent =
-        status.status === "running" ? "Em Execução" :
-        status.status === "completed" ? "Concluído" : "Standby";
+        status.status === "running" ? "Em Execucao" :
+        status.status === "completed" ? "Concluido" : "Standby";
 
     document.getElementById('current-target').textContent =
         status.current_target || "N/A";
@@ -614,8 +615,6 @@ function updateRealTimeStatus(status) {
         status.progress?.current || 0,
         status.progress?.total || 0
     );
-
-    document.getElementById('total-tests').textContent = status.progress?.current || 0;
 
     // Update counters
     updateCounters(
@@ -633,7 +632,7 @@ function updateFallbackStatus() {
         fetch("/Ataque_Bem-Sucedido/").then(r => r.text()).catch(() => "")
     ]).then(([resultsData, vulnData]) => {
 
-        console.log('📂 Dados do diretório de resultados recebidos');
+        console.log('📂 Dados do diretorio de resultados recebidos');
 
         // Count test directories (not IP files)
         const testDirectoriesCount = countIPFiles(resultsData);
@@ -641,9 +640,9 @@ function updateFallbackStatus() {
         // Count RESUMO files specifically
         const vulnCount = countResumoFiles(vulnData);
 
-        console.log(`📊 Fallback stats: ${testDirectoriesCount} diretórios de teste, ${vulnCount} vulnerabilidades`);
+        console.log(`📊 Fallback stats: ${testDirectoriesCount} diretorios de teste, ${vulnCount} vulnerabilidades`);
 
-        // Update main status
+        // MESMA LÓGICA DO REALTIME - mas sem status.status
         let statusClass = "info";
         let statusIcon = "🔍";
         let statusText = "";
@@ -651,14 +650,11 @@ function updateFallbackStatus() {
         if (vulnCount > 0) {
             statusClass = "vulnerable";
             statusIcon = "🚨";
-            statusText = `${vulnCount} POSSÍVEIS VULNERABILIDADES`;
-        } else if (testDirectoriesCount > 0) {
-            statusClass = "safe";
-            statusIcon = "✅";
-            statusText = `${testDirectoriesCount} TESTES EXECUTADOS - SISTEMA SEGURO`;
+            statusText = `POSSÍVEIS VULNERABILIDADES CRÍTICAS: ${vulnCount}`;
         } else {
+            // Sem status.status, assumir standby
             statusIcon = "🔍";
-            statusText = "SISTEMA ATIVO - NENHUM TESTE EXECUTADO";
+            statusText = "SISTEMA ATIVO - AGUARDANDO INICIO";
         }
 
         setMainStatus(statusIcon, statusText, statusClass);
@@ -711,7 +707,7 @@ fi
 # Enhanced function to update web stats with IP counting - COUNT ALL IP FILES
 update_web_stats() {
     if [ -d "/Pentests/Todos_os_Resultados" ]; then
-        echo "📊 Atualizando estatísticas web..."
+        echo "📊 Atualizando estatisticas web..."
 
         # Count ALL IP files (including tcp/udp variants, ignoring control files)
         local ip_count=0
@@ -749,7 +745,7 @@ chmod -R 755 /Pentests
 # Enhanced function to check Apache2 status
 check_apache() {
     if ! pgrep apache2 > /dev/null; then
-        echo "⚠️ Apache2 não encontrado. Iniciando..."
+        echo "⚠️ Apache2 nao encontrado. Iniciando..."
 
         # Clean orphaned sockets
         find /var/run/apache2/ -name "cgisock*" -exec unlink {} \; 2>/dev/null || true
@@ -769,7 +765,7 @@ check_apache() {
 }
 
 # Start Apache2 and monitoring
-echo "🌐 Iniciando serviços web..."
+echo "🌐 Iniciando servicos web..."
 check_apache
 
 # Background monitoring process

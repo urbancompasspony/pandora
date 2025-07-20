@@ -122,7 +122,7 @@ update_web_stats() {
     chown www-data:www-data /Pentests/stats.json
 }
 
-# Funcão para adicionar IP como testado (thread-safe)
+# Funcao para adicionar IP como testado (thread-safe)
 mark_ip_as_tested() {
     local ip=$1
     local result=$2  # "success", "no_services", "host_down", "timeout", "network_error"
@@ -159,7 +159,7 @@ mark_ip_as_tested() {
     ) 200>"$control_lock_file"
 }
 
-# Funcão para verificar se IP deve ser testado
+# Funcao para verificar se IP deve ser testado
 should_test_ip() {
     local ip=$1
 
@@ -170,7 +170,7 @@ should_test_ip() {
 
         if [ "$last_result" = "success" ] || [ "$last_result" = "no_services" ]; then
             echo "IP $ip testado recentemente com sucesso - pulando" | tee -a "$tolog"
-            return 1  # Não testar
+            return 1  # Nao testar
         fi
     fi
 
@@ -225,7 +225,7 @@ should_test_ip() {
     return 0  # Pode testar
 }
 
-# Funcão para detectar tipo de ambiente/horario
+# Funcao para detectar tipo de ambiente/horario
 detect_environment_context() {
     local current_hour
     current_hour=$(date +%H)
@@ -238,7 +238,7 @@ detect_environment_context() {
     fi
 }
 
-# Funcão avancada de verificacão de conectividade
+# Funcao avancada de verificacao de conectividade
 advanced_connectivity_check() {
     local ip=$1
 
@@ -270,13 +270,13 @@ advanced_connectivity_check() {
     return 1  # Host realmente down
 }
 
-# Funcão para verificar se IP ja foi testado nas ultimas X horas
+# Funcao para verificar se IP ja foi testado nas ultimas X horas
 is_ip_recently_tested() {
     local ip=$1
     local hours_limit=${2:-24}  # Default 24h
 
     if [ ! -f "$tested_ips_file" ]; then
-        return 1  # Não foi testado
+        return 1  # Nao foi testado
     fi
 
     # Buscar ultima entrada do IP
@@ -284,7 +284,7 @@ is_ip_recently_tested() {
     last_test=$(grep " $ip " "$tested_ips_file" | tail -1)
 
     if [ -z "$last_test" ]; then
-        return 1  # Não encontrado
+        return 1  # Nao encontrado
     fi
 
     # Extrair timestamp
@@ -296,7 +296,7 @@ is_ip_recently_tested() {
     test_timestamp=$(date -d "$test_date" +%s 2>/dev/null)
 
     if [ -z "$test_timestamp" ]; then
-        return 1  # Erro na conversão
+        return 1  # Erro na conversao
     fi
 
     # Calcular diferenca em horas
@@ -308,18 +308,18 @@ is_ip_recently_tested() {
     if [ "$diff_hours" -lt "$hours_limit" ]; then
         return 0  # Foi testado recentemente
     else
-        return 1  # Não foi testado recentemente
+        return 1  # Nao foi testado recentemente
     fi
 }
 
-# Funcão para adicionar IPs pendentes
+# Funcao para adicionar IPs pendentes
 add_pending_ips() {
     local ip_list_file=$1
 
     (
         flock -x 200
 
-        # Adicionar todos os IPs como pendentes se não estão testados
+        # Adicionar todos os IPs como pendentes se nao estao testados
         while read -r ip; do
             if ! is_ip_recently_tested "$ip"; then
                 echo "$ip" >> "$pending_ips_file"
@@ -334,7 +334,7 @@ add_pending_ips() {
     ) 200>"$control_lock_file"
 }
 
-# Funcão para limpar arquivos de controle antigos
+# Funcao para limpar arquivos de controle antigos
 cleanup_old_control_files() {
     local days_limit=${1:-7}  # Default 7 dias
 
@@ -354,7 +354,7 @@ cleanup_old_control_files() {
     fi
 }
 
-# Funcão para gerar relatorio de controle
+# Funcao para gerar relatorio de controle
 generate_control_report() {
     local report_file="$pathtest/$name/relatorio_controle_ips.txt"
 
@@ -516,9 +516,9 @@ aggressive_black_box_scan() {
     echo "[$current_counter/$total_ips] BLACK BOX SCAN: $ip" | tee -a "$tolog"
     update_status "$current_counter" "$total_ips" "0" "$ip"
 
-    # Verificacão avancada de conectividade
+    # Verificacao avancada de conectividade
     if ! advanced_connectivity_check "$ip"; then
-        echo "[$current_counter/$total_ips] IP $ip não acessivel - marcando como host_down" | tee -a "$tolog"
+        echo "[$current_counter/$total_ips] IP $ip nao acessivel - marcando como host_down" | tee -a "$tolog"
         mark_ip_as_tested "$ip" "host_down" "no_connectivity"
         {
             echo "Host $ip inacessivel (multiplos testes falharam)"
@@ -530,7 +530,7 @@ aggressive_black_box_scan() {
 
     echo "[$current_counter/$total_ips] Host $ip acessivel - iniciando scan completo..." | tee -a "$tolog"
 
-    # Phase 1: Full TCP port scan com deteccão melhorada de timeout
+    # Phase 1: Full TCP port scan com deteccao melhorada de timeout
     echo "[$current_counter/$total_ips] TCP Full Scan (1-65535) - $ip..." | tee -a "$tolog"
 
     local tcp_start_time
@@ -681,7 +681,7 @@ aggressive_black_box_scan() {
     fi
 }
 
-# Funcão para gerar relatorio detalhado de retry
+# Funcao para gerar relatorio detalhado de retry
 generate_retry_report() {
     local report_file="$pathtest/$name/relatorio_retry_strategy.txt"
 
@@ -821,7 +821,7 @@ check_vulnerabilities() {
 
             # SEGUNDO: So agora verificar falsos positivos - MAS SÓ SE REALMENTE NÃO HÁ VULNERABILIDADES
             if [ "$vuln_detected" = true ]; then
-                # Verificar se as vulnerabilidades encontradas são reais ou falsos positivos
+                # Verificar se as vulnerabilidades encontradas sao reais ou falsos positivos
                 local false_positives
                 false_positives=$(grep -E "(NOT VULNERABLE|not vulnerable|Not vulnerable|NOT Exploitable|not exploitable|Not exploitable|State: NOT VULNERABLE|: Not vulnerable|Status: Not vulnerable)" "$pathtest/$name/$line" 2>/dev/null || true)
 
@@ -863,7 +863,7 @@ check_vulnerabilities() {
 
                     echo -e "$vuln_details" >> "$vuln0/RESUMO_${line}.txt"
 
-                    # Se ha falsos positivos, mencionar mas não descartar
+                    # Se ha falsos positivos, mencionar mas nao descartar
                     if [ -n "$false_positives" ]; then
                         {
                             echo "FALSOS POSITIVOS ENCONTRADOS (IGNORADOS):"
@@ -914,7 +914,7 @@ manage_ip_cache() {
     # Limpar arquivos de controle antigos (7 dias)
     cleanup_old_control_files 7
 
-    # Adicionar IPs atuais como pendentes se não foram testados
+    # Adicionar IPs atuais como pendentes se nao foram testados
     add_pending_ips "$toip1"
 
     # Filtrar IPs ja testados nas ultimas 24h (ou usar IPs pendentes)
@@ -922,9 +922,9 @@ manage_ip_cache() {
 
     # Primeiro, tentar usar IPs pendentes se existirem
     if [ -f "$pending_ips_file" ] && [ -s "$pending_ips_file" ]; then
-        echo "Usando lista de IPs pendentes da execucão anterior..." | tee -a "$tolog"
+        echo "Usando lista de IPs pendentes da execucao anterior..." | tee -a "$tolog"
 
-        # Verificar quais IPs pendentes ainda estão ativos
+        # Verificar quais IPs pendentes ainda estao ativos
         local active_pending
         active_pending=$(mktemp)
 
@@ -939,13 +939,13 @@ manage_ip_cache() {
             mv "$active_pending" "$filtered_file"
             local pending_count
             pending_count=$(wc -l < "$filtered_file")
-            echo "Encontrados $pending_count IPs pendentes da execucão anterior." | tee -a "$tolog"
+            echo "Encontrados $pending_count IPs pendentes da execucao anterior." | tee -a "$tolog"
         else
             rm -f "$active_pending"
             cp "$toip1" "$filtered_file"
         fi
     else
-        # Se não ha pendentes, filtrar por IPs não testados recentemente
+        # Se nao ha pendentes, filtrar por IPs nao testados recentemente
         true > "$filtered_file"
 
         while read -r ip; do
@@ -1124,7 +1124,7 @@ function init {
             curl -u admin:5V06auso -T "$zipfiles"/"$name".zip -H "Filename: $name.zip" -H "Title: POSSÍVEIS VULNERABILIDADES - BLACK BOX - $namepan" -H "Priority: urgent" "$ntfysh"/"$namepan"
         else
             echo "Enviando notificacao - Black Box scan concluido." | tee -a "$tolog"
-            curl -u admin:5V06auso -d "Black Box Pentest concluido em $namepan. $lres IPs testados. TCP: 1-65535, UDP: Top 30 criticas. Nenhuma possível vulnerabilidade detectada." -H "Title: Black Box Scan Concluido - $namepan" "$ntfysh"/"$namepan"
+            curl -u admin:5V06auso -d "Black Box Pentest concluido em $namepan. $lres IPs testados. TCP: 1-65535, UDP: Top 30 criticas. Nenhuma possivel vulnerabilidade detectada." -H "Title: Black Box Scan Concluido - $namepan" "$ntfysh"/"$namepan"
         fi
     fi
 
