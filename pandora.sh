@@ -160,21 +160,33 @@ mark_ip_as_tested() {
 }
 
 # Funcao para verificar se IP deve ser testado
+# Funcao para verificar se IP deve ser testado - APRIMORADA
 should_test_ip() {
     local ip=$1
 
-    # Verificar se foi testado com sucesso recentemente
+    # REGRA PRINCIPAL: Verificar se foi testado com sucesso nas últimas 48h
     if is_ip_recently_tested "$ip" 48; then
-        local last_result
-        last_result=$(grep " $ip " "$tested_ips_file" | tail -1 | awk '{print $3}')
-
-        if [ "$last_result" = "success" ] || [ "$last_result" = "no_services" ]; then
-            echo "IP $ip testado recentemente com sucesso - pulando" | tee -a "$tolog"
-            return 1  # Nao testar
+        local last_result=""
+        local last_test_time=""
+        
+        if [ -f "$tested_ips_file" ]; then
+            local last_test_line
+            last_test_line=$(grep " $ip " "$tested_ips_file" | tail -1)
+            last_result=$(echo "$last_test_line" | awk '{print $3}')
+            last_test_time=$(echo "$last_test_line" | awk '{print $1 " " $2}')
         fi
+
+        # Se foi testado com sucesso ou sem serviços nas últimas 48h, pular
+        if [ "$last_result" = "success" ] || [ "$last_result" = "no_services" ]; then
+            echo "IP $ip testado com sucesso nas últimas 48h ($last_test_time - $last_result) - PULANDO" | tee -a "$tolog"
+            return 1  # Não testar
+        fi
+        
+        # Se foi testado com falha nas últimas 48h, verificar estratégia de retry
+        echo "IP $ip testado com falha nas últimas 48h ($last_result) - verificando retry..." | tee -a "$tolog"
     fi
 
-    # Verificar retry baseado no tipo de falha
+    # Verificar retry baseado no tipo de falha (apenas se houve falha recente)
     if [ -f "$failed_ips_file" ]; then
         local last_failure
         last_failure=$(grep " $ip " "$failed_ips_file" | tail -1)
@@ -197,31 +209,34 @@ should_test_ip() {
             local hours_since_failure
             hours_since_failure=$(( (current_timestamp - failure_timestamp) / 3600 ))
 
+            # Aplicar estratégia de retry apenas se a falha foi recente
             case "$retry_strategy" in
                 "RETRY_6H")
                     if [ "$hours_since_failure" -lt 6 ]; then
-                        echo "IP $ip falhou ha ${hours_since_failure}h (host_down) - aguardando 6h" | tee -a "$tolog"
+                        echo "IP $ip falhou há ${hours_since_failure}h (host_down) - aguardando 6h para retry" | tee -a "$tolog"
                         return 1
                     fi
                     ;;
                 "RETRY_12H")
                     if [ "$hours_since_failure" -lt 12 ]; then
-                        echo "IP $ip falhou ha ${hours_since_failure}h (network_error) - aguardando 12h" | tee -a "$tolog"
+                        echo "IP $ip falhou há ${hours_since_failure}h (network_error) - aguardando 12h para retry" | tee -a "$tolog"
                         return 1
                     fi
                     ;;
                 "RETRY_24H")
                     if [ "$hours_since_failure" -lt 24 ]; then
-                        echo "IP $ip falhou ha ${hours_since_failure}h (timeout) - aguardando 24h" | tee -a "$tolog"
+                        echo "IP $ip falhou há ${hours_since_failure}h (timeout) - aguardando 24h para retry" | tee -a "$tolog"
                         return 1
                     fi
                     ;;
             esac
 
-            echo "IP $ip elegivel para retry apos ${hours_since_failure}h (falha: $failure_type)" | tee -a "$tolog"
+            echo "IP $ip elegível para retry após ${hours_since_failure}h (falha: $failure_type)" | tee -a "$tolog"
         fi
     fi
 
+    # Se chegou até aqui, pode testar
+    echo "IP $ip APROVADO para teste" | tee -a "$tolog"
     return 0  # Pode testar
 }
 
@@ -312,17 +327,22 @@ is_ip_recently_tested() {
     fi
 }
 
-# Funcao para adicionar IPs pendentes
+# Funcao para adicionar IPs pendentes - CORRIGIDA
 add_pending_ips() {
     local ip_list_file=$1
 
     (
         flock -x 200
 
-        # Adicionar todos os IPs como pendentes se nao estao testados
+        # Limpar arquivo de pendentes existente para re-avaliar todos os IPs
+        > "$pending_ips_file"
+
+        # Adicionar IPs como pendentes APENAS se não foram testados nas últimas 48h
         while read -r ip; do
-            if ! is_ip_recently_tested "$ip"; then
+            if ! is_ip_recently_tested "$ip" 48; then
                 echo "$ip" >> "$pending_ips_file"
+            else
+                echo "IP $ip testado nas últimas 48h - removendo dos pendentes" | tee -a "$tolog"
             fi
         done < "$ip_list_file"
 
@@ -914,48 +934,49 @@ manage_ip_cache() {
     # Limpar arquivos de controle antigos (7 dias)
     cleanup_old_control_files 7
 
-    # Adicionar IPs atuais como pendentes se nao foram testados
-    add_pending_ips "$toip1"
-
-    # Filtrar IPs ja testados nas ultimas 24h (ou usar IPs pendentes)
+    # SEMPRE re-avaliar IPs com base na regra de 48h
+    echo "Re-avaliando todos os IPs com base na regra de 48h..." | tee -a "$tolog"
+    
+    # Filtrar IPs que NÃO foram testados nas últimas 48h
     local filtered_file="$toip1.filtered"
+    > "$filtered_file"
 
-    # Primeiro, tentar usar IPs pendentes se existirem
-    if [ -f "$pending_ips_file" ] && [ -s "$pending_ips_file" ]; then
-        echo "Usando lista de IPs pendentes da execucao anterior..." | tee -a "$tolog"
+    local total_ips=0
+    local recently_tested=0
+    local eligible_for_test=0
 
-        # Verificar quais IPs pendentes ainda estao ativos
-        local active_pending
-        active_pending=$(mktemp)
-
-        while read -r pending_ip; do
-            if grep -q "^$pending_ip$" "$toip1"; then
-                echo "$pending_ip" >> "$active_pending"
+    while read -r ip; do
+        total_ips=$((total_ips + 1))
+        
+        # Verificar se foi testado nas últimas 48h
+        if is_ip_recently_tested "$ip" 48; then
+            recently_tested=$((recently_tested + 1))
+            
+            # Verificar o resultado do último teste
+            local last_result=""
+            if [ -f "$tested_ips_file" ]; then
+                last_result=$(grep " $ip " "$tested_ips_file" | tail -1 | awk '{print $3}')
             fi
-        done < "$pending_ips_file"
-
-        # Se ha IPs pendentes ativos, usar eles
-        if [ -s "$active_pending" ]; then
-            mv "$active_pending" "$filtered_file"
-            local pending_count
-            pending_count=$(wc -l < "$filtered_file")
-            echo "Encontrados $pending_count IPs pendentes da execucao anterior." | tee -a "$tolog"
+            
+            echo "IP $ip testado nas últimas 48h (resultado: $last_result) - IGNORANDO" | tee -a "$tolog"
         else
-            rm -f "$active_pending"
-            cp "$toip1" "$filtered_file"
+            # IP elegível para teste
+            eligible_for_test=$((eligible_for_test + 1))
+            echo "$ip" >> "$filtered_file"
+            echo "IP $ip elegível para teste (não testado nas últimas 48h)" | tee -a "$tolog"
         fi
-    else
-        # Se nao ha pendentes, filtrar por IPs nao testados recentemente
-        true > "$filtered_file"
+    done < "$toip1"
 
-        while read -r ip; do
-            if ! is_ip_recently_tested "$ip" 48; then
-                echo "$ip" >> "$filtered_file"
-            fi
-        done < "$toip1"
+    # Atualizar arquivo de IPs pendentes com base na filtragem atual
+    if [ -s "$filtered_file" ]; then
+        cp "$filtered_file" "$pending_ips_file"
+        echo "Arquivo de IPs pendentes atualizado com $eligible_for_test IPs" | tee -a "$tolog"
+    else
+        > "$pending_ips_file"
+        echo "Nenhum IP pendente - todos foram testados nas últimas 48h" | tee -a "$tolog"
     fi
 
-    # Aplicar filtro de cache antigo tambem (para compatibilidade)
+    # Aplicar filtro de cache antigo também (para compatibilidade com sistema legado)
     if [ -f "$cachefile" ]; then
         find "$cachefile" -mtime +2 -delete 2>/dev/null
 
@@ -963,26 +984,82 @@ manage_ip_cache() {
             local temp_filtered
             temp_filtered=$(mktemp)
             grep -v -F -x -f "$cachefile" "$filtered_file" > "$temp_filtered" 2>/dev/null || cp "$filtered_file" "$temp_filtered"
-            mv "$temp_filtered" "$filtered_file"
+            
+            # Só aplicar cache legado se não reduzir muito a lista (evitar conflitos)
+            local cache_filtered_count
+            cache_filtered_count=$(wc -l < "$temp_filtered")
+            
+            if [ "$cache_filtered_count" -gt 0 ]; then
+                mv "$temp_filtered" "$filtered_file"
+                echo "Cache legado aplicado - $cache_filtered_count IPs restantes após cache" | tee -a "$tolog"
+            else
+                rm -f "$temp_filtered"
+                echo "Cache legado ignorado - todos os IPs já foram filtrados pela regra de 48h" | tee -a "$tolog"
+            fi
         fi
     fi
 
-    # Mostrar estatisticas
-    local original_count
-    original_count=$(wc -l < "$toip1")
-    local filtered_count
-    filtered_count=$(wc -l < "$filtered_file")
-    local removed_count
-    removed_count=$((original_count - filtered_count))
+    # Mostrar estatísticas detalhadas
+    local final_count
+    final_count=$(wc -l < "$filtered_file")
 
-    echo "Controle de IPs: $original_count descobertos, $removed_count ja testados, $filtered_count restantes." | tee -a "$tolog"
+    echo "=== ESTATÍSTICAS DE CONTROLE DE IPs ===" | tee -a "$tolog"
+    echo "Total de IPs descobertos: $total_ips" | tee -a "$tolog"
+    echo "IPs testados nas últimas 48h: $recently_tested" | tee -a "$tolog"
+    echo "IPs elegíveis para teste: $final_count" | tee -a "$tolog"
+    echo "=========================================" | tee -a "$tolog"
 
     # Substituir lista original pela filtrada
     mv "$filtered_file" "$toip1"
 
-    # Add current IPs to cache (manter compatibilidade)
-    cat "$toip1" >> "$cachefile"
-    sort -u "$cachefile" -o "$cachefile" 2>/dev/null
+    # Adicionar IPs atuais ao cache legado (manter compatibilidade)
+    if [ -s "$toip1" ]; then
+        cat "$toip1" >> "$cachefile"
+        sort -u "$cachefile" -o "$cachefile" 2>/dev/null
+    fi
+
+    # Se nenhum IP para testar, informar
+    if [ "$final_count" -eq 0 ]; then
+        echo "AVISO: Nenhum IP para testar - todos foram testados nas últimas 48h" | tee -a "$tolog"
+        echo "Próxima execução recomendada: após 48h do último teste" | tee -a "$tolog"
+    fi
+}
+
+# Funcao para limpar IPs pendentes baseado na regra de 48h - NOVA
+cleanup_pending_ips() {
+    echo "Limpando IPs pendentes baseado na regra de 48h..." | tee -a "$tolog"
+    
+    if [ ! -f "$pending_ips_file" ]; then
+        echo "Arquivo de IPs pendentes não encontrado - nada para limpar" | tee -a "$tolog"
+        return 0
+    fi
+
+    local temp_pending
+    temp_pending=$(mktemp)
+    local cleaned_count=0
+    local kept_count=0
+
+    # Verificar cada IP pendente
+    while read -r ip; do
+        if [ -n "$ip" ]; then
+            if is_ip_recently_tested "$ip" 48; then
+                # IP foi testado nas últimas 48h - remover dos pendentes
+                cleaned_count=$((cleaned_count + 1))
+                echo "Removendo IP $ip dos pendentes (testado nas últimas 48h)" | tee -a "$tolog"
+            else
+                # IP ainda é válido para teste - manter
+                echo "$ip" >> "$temp_pending"
+                kept_count=$((kept_count + 1))
+            fi
+        fi
+    done < "$pending_ips_file"
+
+    # Substituir arquivo de pendentes
+    mv "$temp_pending" "$pending_ips_file"
+    
+    echo "Limpeza de IPs pendentes concluída:" | tee -a "$tolog"
+    echo "- IPs removidos (testados < 48h): $cleaned_count" | tee -a "$tolog"
+    echo "- IPs mantidos (elegíveis): $kept_count" | tee -a "$tolog"
 }
 
 function init {
@@ -1029,6 +1106,9 @@ function init {
 
     # Remove Blacklist IPs
     grep -v -F -x -f "/Data/blacklist" "$toip" | tee "$toip1"
+
+    # Limpar IPs pendentes primeiro (baseado na regra de 48h)
+    cleanup_pending_ips
 
     # Manage IP cache for black box
     manage_ip_cache
