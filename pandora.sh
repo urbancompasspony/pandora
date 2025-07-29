@@ -374,6 +374,147 @@ cleanup_old_control_files() {
     fi
 }
 
+cleanup_old_files() {
+    echo "=== INICIANDO LIMPEZA AGRESSIVA (MAX 7 DIAS) ===" | tee -a "$tolog"
+
+    # 1. Limpeza do diretório de vulnerabilidades (/Ataque_Bem-Sucedido/)
+    # REGRA: 3 dias máximo
+    if [ -d "$vuln0" ]; then
+        echo "Limpando vulnerabilidades antigas em $vuln0 (>3 dias)..." | tee -a "$tolog"
+
+        # Contar arquivos antes
+        vuln_before=$(find "$vuln0" -type f 2>/dev/null | wc -l)
+
+        # AGRESSIVO: Apagar TODOS os arquivos > 3 dias
+        find "$vuln0" -type f -mtime +3 -delete 2>/dev/null
+
+        # Contar após limpeza
+        vuln_after=$(find "$vuln0" -type f 2>/dev/null | wc -l)
+        vuln_removed=$((vuln_before - vuln_after))
+
+        echo "Vulnerabilidades: $vuln_removed arquivos removidos ($vuln_after mantidos - max 3 dias)" | tee -a "$tolog"
+    fi
+
+    # 2. Limpeza dos resultados de testes (/Todos_os_Resultados/)
+    # REGRA: 5 dias máximo
+    if [ -d "$pathtest" ]; then
+        echo "Limpando resultados de testes antigos (>5 dias)..." | tee -a "$tolog"
+
+        # Contar diretórios de teste antes
+        test_dirs_before=$(find "$pathtest" -maxdepth 1 -type d -name "*_*_*-*:*" 2>/dev/null | wc -l)
+
+        # Apagar diretórios de teste > 5 dias
+        find "$pathtest" -maxdepth 1 -type d -name "*_*_*-*:*" -mtime +5 -exec rm -rf {} + 2>/dev/null
+
+        # Apagar diretórios vazios
+        find "$pathtest" -type d -empty -delete 2>/dev/null
+
+        # Contar após limpeza
+        test_dirs_after=$(find "$pathtest" -maxdepth 1 -type d -name "*_*_*-*:*" 2>/dev/null | wc -l)
+        test_dirs_removed=$((test_dirs_before - test_dirs_after))
+
+        echo "Testes: $test_dirs_removed diretórios removidos ($test_dirs_after mantidos - max 5 dias)" | tee -a "$tolog"
+    fi
+
+    # 3. Limpeza dos arquivos zipados (/Historico/)
+    # REGRA: 7 dias máximo
+    if [ -d "$zipfiles" ]; then
+        echo "Limpando arquivos históricos (>7 dias)..." | tee -a "$tolog"
+
+        # Contar zips antes
+        zip_before=$(find "$zipfiles" -type f -name "*.zip" 2>/dev/null | wc -l)
+
+        # AGRESSIVO: Apagar zips > 7 dias (não 30!)
+        find "$zipfiles" -type f -name "*.zip" -mtime +7 -delete 2>/dev/null
+
+        # Contar após limpeza
+        zip_after=$(find "$zipfiles" -type f -name "*.zip" 2>/dev/null | wc -l)
+        zip_removed=$((zip_before - zip_after))
+
+        echo "Histórico: $zip_removed arquivos ZIP removidos ($zip_after mantidos - max 7 dias)" | tee -a "$tolog"
+    fi
+
+    # 4. Limpeza AGRESSIVA dos arquivos de controle
+    echo "Limpeza agressiva de arquivos de controle..." | tee -a "$tolog"
+
+    # Arquivo de IPs testados - manter apenas 500 entradas mais recentes
+    if [ -f "$tested_ips_file" ] && [ $(wc -l < "$tested_ips_file") -gt 500 ]; then
+        echo "Compactando arquivo de IPs testados para 500 entradas..." | tee -a "$tolog"
+        tail -500 "$tested_ips_file" > "${tested_ips_file}.tmp"
+        mv "${tested_ips_file}.tmp" "$tested_ips_file"
+    fi
+
+    # Arquivo de falhas - manter apenas últimos 3 dias
+    if [ -f "$failed_ips_file" ]; then
+        failed_before=$(wc -l < "$failed_ips_file" 2>/dev/null || echo "0")
+
+        if [ "$failed_before" -gt 0 ]; then
+            local temp_failed
+            temp_failed=$(mktemp)
+            local cutoff_date
+            cutoff_date=$(date -d "3 days ago" "+%d/%m/%y")
+
+            # Filtrar por data (manter apenas >= cutoff_date)
+            awk -v cutoff="$cutoff_date" '$1 >= cutoff' "$failed_ips_file" > "$temp_failed" 2>/dev/null || touch "$temp_failed"
+            mv "$temp_failed" "$failed_ips_file"
+
+            failed_after=$(wc -l < "$failed_ips_file" 2>/dev/null || echo "0")
+            failed_removed=$((failed_before - failed_after))
+            echo "Controle: $failed_removed falhas antigas removidas ($failed_after mantidas - max 3 dias)" | tee -a "$tolog"
+        fi
+    fi
+
+    # Cache de IPs - limpar completamente se > 7 dias
+    if [ -f "$cachefile" ]; then
+        find "$cachefile" -mtime +7 -delete 2>/dev/null
+        echo "Cache de IPs limpo (>7 dias)" | tee -a "$tolog"
+    fi
+
+    # 5. Limpeza de logs - manter apenas 2000 linhas
+    if [ -f "$tolog" ] && [ $(wc -l < "$tolog") -gt 2000 ]; then
+        echo "Compactando log principal para 2000 linhas..." | tee -a "$tolog"
+        tail -2000 "$tolog" > "${tolog}.tmp"
+        mv "${tolog}.tmp" "$tolog"
+    fi
+
+    # 6. Limpeza de arquivos temporários e locks antigos
+    echo "Removendo arquivos temporários e locks antigos..." | tee -a "$tolog"
+    find /tmp -name "*pandora*" -mtime +1 -delete 2>/dev/null
+    find "$pidfile" -name "*.lock" -mtime +1 -delete 2>/dev/null
+    find "$pidfile" -name "*.tmp" -mtime +1 -delete 2>/dev/null
+
+    # 7. Estatísticas finais
+    echo "=== LIMPEZA AGRESSIVA CONCLUÍDA ===" | tee -a "$tolog"
+    echo "Política aplicada: 3 dias (vulns), 5 dias (testes), 7 dias (zips)" | tee -a "$tolog"
+    echo "RESUMO files mantidos: $(find "$vuln0" -name "RESUMO_*" 2>/dev/null | wc -l)" | tee -a "$tolog"
+    echo "Diretórios de teste mantidos: $(find "$pathtest" -maxdepth 1 -type d -name "*_*_*-*:*" 2>/dev/null | wc -l)" | tee -a "$tolog"
+    echo "Arquivos ZIP mantidos: $(find "$zipfiles" -name "*.zip" 2>/dev/null | wc -l)" | tee -a "$tolog"
+    echo "Espaço total usado: $(du -sh "$pidfile" 2>/dev/null | cut -f1)" | tee -a "$tolog"
+    echo "=================================" | tee -a "$tolog"
+}
+
+# Função para verificar espaço em disco
+check_disk_space() {
+    local available_space
+    available_space=$(df "$pidfile" | awk 'NR==2 {print $4}')
+    local available_gb
+    available_gb=$((available_space / 1024 / 1024))
+
+    echo "Espaço disponível: ${available_gb}GB" | tee -a "$tolog"
+
+    # Se menos de 2GB, fazer limpeza de emergência
+    if [ "$available_gb" -lt 2 ]; then
+        echo "ALERTA: Pouco espaço em disco! Executando limpeza de emergência..." | tee -a "$tolog"
+        emergency_cleanup
+    # Se menos de 5GB, fazer limpeza agressiva extra
+    elif [ "$available_gb" -lt 5 ]; then
+        echo "AVISO: Espaço limitado. Executando limpeza extra..." | tee -a "$tolog"
+        find "$vuln0" -type f -mtime +1 -delete 2>/dev/null
+        find "$pathtest" -maxdepth 1 -type d -name "*_*_*-*:*" -mtime +3 -exec rm -rf {} + 2>/dev/null
+        find "$zipfiles" -type f -name "*.zip" -mtime +3 -delete 2>/dev/null
+    fi
+}
+
 # Funcao para gerar relatorio de controle
 generate_control_report() {
     local report_file="$pathtest/$name/relatorio_controle_ips.txt"
@@ -1290,11 +1431,8 @@ function init {
     chmod 777 -R "$pidfile"
 
     # Remove old Files with better cleanup
-    echo "Limpando arquivos antigos..." | tee -a "$tolog"
-    find "$vuln0" -type f -mtime +7 -delete 2>/dev/null
-    find "$pathtest" -type d -mtime +5 -exec rm -rf {} + 2>/dev/null
-    find "$pathtest" -type d -empty -delete 2>/dev/null
-    find "$zipfiles" -type f -mtime +30 -delete 2>/dev/null
+    check_disk_space
+    cleanup_old_files
 
     # Send message with attachments
     sleep 1
