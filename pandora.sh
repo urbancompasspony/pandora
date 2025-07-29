@@ -773,156 +773,256 @@ generate_retry_report() {
 check_vulnerabilities() {
     local vuln_found=1  # Default to no vulnerabilities found
 
-    echo "Analisando resultados para vulnerabilidades suspeitas..." | tee -a "$tolog"
+    echo "Analisando resultados para vulnerabilidades 2024/2025..." | tee -a "$tolog"
 
     while read -r line; do
         if [ -f "$pathtest/$name/$line" ]; then
 
-            # PRIMEIRO: Verificar se ha vulnerabilidades REAIS
+            # FILTRO PRINCIPAL: Apenas CVEs de 2024 e 2025
             local vuln_detected=false
             local vuln_summary=""
             local vuln_details=""
 
-            # 1. CVEs com scores criticos (8.0+)
-            local critical_cves
-            critical_cves=$(grep -E "CVE-[0-9]{4}-[0-9]+.*([89]\.[0-9]|10\.0)" "$pathtest/$name/$line" 2>/dev/null || true)
-            if [ -n "$critical_cves" ]; then
+            # 1. CVEs criticos de 2024/2025 APENAS (8.0+)
+            local critical_cves_2024_2025
+            critical_cves_2024_2025=$(grep -E "CVE-(2024|2025)-[0-9]+.*([89]\.[0-9]|10\.0)" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$critical_cves_2024_2025" ]; then
                 vuln_detected=true
-                vuln_summary+="CVEs criticas detectadas (Score 8.0+)\n"
-                vuln_details+="CRITICAL CVEs:\n$critical_cves\n\n"
+                vuln_summary+="CVEs criticos 2024/2025 detectados (Score 8.0+)\n"
+                vuln_details+="CRITICAL CVEs 2024/2025:\n$critical_cves_2024_2025\n\n"
             fi
 
-            # 2. Vulnerabilidades especificas extremamente criticas
-            local extreme_cves
-            extreme_cves=$(grep -E "(CVE-2020-1472|CVE-2017-7494|CVE-2015-0240|CVE-2024-38476|CVE-2024-38474|CVE-2023-3961)" "$pathtest/$name/$line" 2>/dev/null || true)
-            if [ -n "$extreme_cves" ]; then
+            # 2. CVEs medios/altos de 2024/2025 (4.0+)
+            local medium_cves_2024_2025
+            medium_cves_2024_2025=$(grep -E "CVE-(2024|2025)-[0-9]+.*[4-7]\.[0-9]" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$medium_cves_2024_2025" ]; then
                 vuln_detected=true
-                vuln_summary+="Vulnerabilidades conhecidas suspeitas\n"
-                vuln_details+="EXTREME CVEs:\n$extreme_cves\n\n"
+                vuln_summary+="CVEs medios/altos 2024/2025 detectados (Score 4.0-7.9)\n"
+                vuln_details+="MEDIUM/HIGH CVEs 2024/2025:\n$medium_cves_2024_2025\n\n"
             fi
 
-            # 3. Exploits publicos disponiveis
-            local exploits
-            exploits=$(grep -E "\*EXPLOIT\*" "$pathtest/$name/$line" 2>/dev/null || true)
-            if [ -n "$exploits" ]; then
+            # 3. Exploits especificos para CVEs 2024/2025
+            local exploits_2024_2025
+            exploits_2024_2025=$(grep -E "\*EXPLOIT\*.*CVE-(2024|2025)" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$exploits_2024_2025" ]; then
                 vuln_detected=true
-                vuln_summary+="Exploits publicos disponiveis\n"
-                vuln_details+="EXPLOITS:\n$exploits\n\n"
+                vuln_summary+="Exploits publicos para CVEs 2024/2025\n"
+                vuln_details+="EXPLOITS 2024/2025:\n$exploits_2024_2025\n\n"
             fi
 
-            # 4. Palavras-chave tradicionais de vulnerabilidade
-            local vuln_keywords
-            vuln_keywords=$(grep -E "(VULNERABLE|Exploitable|CRITICAL|HIGH|appears to be vulnerable)" "$pathtest/$name/$line" 2>/dev/null || true)
-            if [ -n "$vuln_keywords" ]; then
+            # 4. Vulnerabilidades de configuracao (sempre relevantes)
+            local config_vulns
+            config_vulns=$(grep -E "(default credentials|weak.*config|anonymous.*access|VULNERABLE.*config)" "$pathtest/$name/$line" 2>/dev/null || true)
+            if [ -n "$config_vulns" ]; then
                 vuln_detected=true
-                vuln_summary+="Status vulneravel confirmado por palavras-chave\n"
-                vuln_details+="VULN KEYWORDS:\n$vuln_keywords\n\n"
+                vuln_summary+="Problemas de configuracao detectados\n"
+                vuln_details+="CONFIG ISSUES:\n$config_vulns\n\n"
             fi
 
-            # 5. CVEs medios e altos (4.0+)
-            local medium_cves
-            medium_cves=$(grep -E "CVE-[0-9]{4}-[0-9]+.*[4-7]\.[0-9]" "$pathtest/$name/$line" 2>/dev/null || true)
-            if [ -n "$medium_cves" ]; then
-                vuln_detected=true
-                vuln_summary+="CVEs medios/altos detectados (Score 4.0-7.9)\n"
-                vuln_details+="MEDIUM/HIGH CVEs:\n$medium_cves\n\n"
-            fi
-
-            # 6. Servicos criticos com CVEs
-            if grep -E "(Active Directory|Domain Controller|Samba.*smbd|LDAP.*Microsoft|Kerberos.*server)" "$pathtest/$name/$line" > /dev/null 2>&1; then
-                if grep -E "CVE-[0-9]{4}-[0-9]+" "$pathtest/$name/$line" > /dev/null 2>&1; then
+            # 5. Apenas servicos criticos SEM filtro de ano (AD, Kerberos, etc)
+            if grep -E "(Active Directory|Domain Controller|Kerberos.*server)" "$pathtest/$name/$line" > /dev/null 2>&1; then
+                local critical_services_cves
+                critical_services_cves=$(grep -E "CVE-(2024|2025)-[0-9]+" "$pathtest/$name/$line" 2>/dev/null || true)
+                if [ -n "$critical_services_cves" ]; then
                     vuln_detected=true
-                    vuln_summary+="Servicos criticos com vulnerabilidades\n"
-                    local critical_services
-                    critical_services=$(grep -E "(Active Directory|Domain Controller|Samba.*smbd|LDAP.*Microsoft|Kerberos)" "$pathtest/$name/$line" 2>/dev/null || true)
-                    vuln_details+="CRITICAL SERVICES:\n$critical_services\n\n"
+                    vuln_summary+="Servicos criticos com CVEs 2024/2025\n"
+                    vuln_details+="CRITICAL SERVICES 2024/2025:\n$critical_services_cves\n\n"
                 fi
             fi
 
-            # SEGUNDO: So agora verificar falsos positivos - MAS So SE REALMENTE NaO Ha VULNERABILIDADES
+            # SE encontrou vulnerabilidades 2024/2025, processar
             if [ "$vuln_detected" = true ]; then
-                # Verificar se as vulnerabilidades encontradas sao reais ou falsos positivos
+                # Verificar falsos positivos mesmo para CVEs recentes
                 local false_positives
-                false_positives=$(grep -E "(NOT VULNERABLE|not vulnerable|Not vulnerable|NOT Exploitable|not exploitable|Not exploitable|State: NOT VULNERABLE|: Not vulnerable|Status: Not vulnerable)" "$pathtest/$name/$line" 2>/dev/null || true)
+                false_positives=$(grep -E "(NOT VULNERABLE|not vulnerable|Not vulnerable|NOT Exploitable|not exploitable|State: NOT VULNERABLE)" "$pathtest/$name/$line" 2>/dev/null || true)
 
                 # Contar vulnerabilidades vs falsos positivos
                 local vuln_count
-                vuln_count=$(echo "$vuln_details" | wc -l)
+                vuln_count=$(echo "$vuln_details" | grep -c "CVE-" || echo "0")
                 local false_positive_count
                 false_positive_count=0
                 if [ -n "$false_positives" ]; then
                     false_positive_count=$(echo "$false_positives" | wc -l)
                 fi
 
-                # Se ha mais vulnerabilidades que falsos positivos, considerar vulneravel
+                echo "[$line] CVEs 2024/2025: $vuln_count | Falsos positivos: $false_positive_count" | tee -a "$tolog"
+
+                # So criar alerta se ha mais vulnerabilidades que falsos positivos
                 if [ "$vuln_count" -gt "$false_positive_count" ] || [ "$false_positive_count" -eq 0 ]; then
                     mkdir -p "$vuln0"
 
                     # Copy the full scan result
                     cp "$pathtest/$name/$line" "$vuln0/${line}_scan.txt"
 
-                    # Generate enhanced summary
+                    # Generate focused summary para CVEs 2024/2025
                     {
-                        echo "=== VULNERABILIDADE SUSPEITA ==="
+                        echo "=== VULNERABILIDADES 2024/2025 DETECTADAS ==="
                         echo "IP: $line"
                         echo "Data: $datetime2"
                         echo "Dispositivo: $namepan"
-                        echo "Metodologia: Black Box Double Blind"
+                        echo "Filtro: Apenas CVEs de 2024 e 2025"
                         echo ""
                         echo "RESUMO DA DETECCAO:"
-                        echo "==================="
+                        echo "=================="
                     } > "$vuln0/RESUMO_${line}.txt"
 
                     echo -e "$vuln_summary" >> "$vuln0/RESUMO_${line}.txt"
 
                     {
                         echo ""
-                        echo "DETALHES DAS VULNERABILIDADES:"
-                        echo "=============================="
+                        echo "DETALHES DAS VULNERABILIDADES 2024/2025:"
+                        echo "========================================"
                     } >> "$vuln0/RESUMO_${line}.txt"
 
                     echo -e "$vuln_details" >> "$vuln0/RESUMO_${line}.txt"
 
-                    # Se ha falsos positivos, mencionar mas nao descartar
+                    # Lista CVEs antigas encontrados (mas ignorados)
+                    local old_cves
+                    old_cves=$(grep -E "CVE-(201[0-9]|202[0-3])-[0-9]+" "$pathtest/$name/$line" 2>/dev/null | wc -l || echo "0")
+
+                    {
+                        echo "NOTA: $old_cves CVEs antigos (2010-2023) foram ignorados por este filtro."
+                        echo "Foco: Apenas vulnerabilidades de 2024 e 2025 que podem nao ter patches."
+                        echo ""
+                    } >> "$vuln0/RESUMO_${line}.txt"
+
+                    # Se ha falsos positivos, mencionar
                     if [ -n "$false_positives" ]; then
                         {
-                            echo "FALSOS POSITIVOS ENCONTRADOS (IGNORADOS):"
-                            echo "========================================="
+                            echo "FALSOS POSITIVOS DETECTADOS:"
+                            echo "============================"
                         } >> "$vuln0/RESUMO_${line}.txt"
 
                         echo "$false_positives" >> "$vuln0/RESUMO_${line}.txt"
-
-                        {
-                            echo ""
-                            echo "NOTA: Vulnerabilidades reais encontradas superam falsos positivos."
-                            echo ""
-                        } >> "$vuln0/RESUMO_${line}.txt"
+                        echo "" >> "$vuln0/RESUMO_${line}.txt"
                     fi
 
                     {
-                        echo "SCAN COMPLETO:"
-                        echo "=============="
+                        echo "SCAN COMPLETO (SOMENTE CVEs 2024/2025):"
+                        echo "======================================="
                     } >> "$vuln0/RESUMO_${line}.txt"
 
-                    cat "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt"
+                    # Filtrar o scan completo para mostrar apenas linhas com CVEs 2024/2025
+                    grep -E "(CVE-(2024|2025)|VULNERABLE|exploitable|Target:|Scan Date:)" "$pathtest/$name/$line" >> "$vuln0/RESUMO_${line}.txt" 2>/dev/null || {
+                        echo "Nenhuma linha adicional com CVEs 2024/2025 encontrada no scan completo." >> "$vuln0/RESUMO_${line}.txt"
+                    }
 
                     vuln_found=0  # Vulnerabilities found
-                    echo "POSSiVEL VULNERABILIDADE DETECTADA em $line!" | tee -a "$tolog"
+                    echo "VULNERABILIDADE 2024/2025 DETECTADA em $line!" | tee -a "$tolog"
                     echo "Resumo: $(echo -e "$vuln_summary" | tr '\n' ' ')" | tee -a "$tolog"
 
-                    if [ -n "$false_positives" ]; then
-                        echo "AVISO: Alguns falsos positivos ignorados - vulnerabilidades reais confirmadas." | tee -a "$tolog"
-                    fi
                 else
-                    echo "[$line] Vulnerabilidades descartadas - muitos falsos positivos detectados" | tee -a "$tolog"
+                    echo "[$line] CVEs 2024/2025 descartados - muitos falsos positivos" | tee -a "$tolog"
                 fi
             else
-                echo "[$line] Nenhuma vulnerabilidade detectada" | tee -a "$tolog"
+                echo "[$line] Nenhuma vulnerabilidade 2024/2025 detectada" | tee -a "$tolog"
             fi
         fi
     done < "$toip1"
 
     return $vuln_found
+}
+
+generate_cve_filter_report() {
+    local report_file="$pathtest/$name/relatorio_filtro_cves.txt"
+
+    {
+        echo "=== RELATORIO DE FILTRO DE CVEs ==="
+        echo "Data: $(date)"
+        echo "Dispositivo: $namepan"
+        echo "Filtro aplicado: CVEs 2024 e 2025 apenas"
+        echo "==================================="
+        echo ""
+    } > "$report_file"
+
+    # Estatisticas de CVEs por ano nos arquivos
+    local total_files=0
+    local files_with_2024_cves=0
+    local files_with_2025_cves=0
+    local total_old_cves=0
+    local total_new_cves=0
+
+    while read -r line; do
+        if [ -f "$pathtest/$name/$line" ]; then
+            total_files=$((total_files + 1))
+
+            # Contar CVEs 2024
+            local cves_2024
+            cves_2024=$(grep -c "CVE-2024-" "$pathtest/$name/$line" 2>/dev/null || echo "0")
+            if [ "$cves_2024" -gt 0 ]; then
+                files_with_2024_cves=$((files_with_2024_cves + 1))
+                total_new_cves=$((total_new_cves + cves_2024))
+            fi
+
+            # Contar CVEs 2025
+            local cves_2025
+            cves_2025=$(grep -c "CVE-2025-" "$pathtest/$name/$line" 2>/dev/null || echo "0")
+            if [ "$cves_2025" -gt 0 ]; then
+                files_with_2025_cves=$((files_with_2025_cves + 1))
+                total_new_cves=$((total_new_cves + cves_2025))
+            fi
+
+            # Contar CVEs antigos (ignorados)
+            local old_cves
+            old_cves=$(grep -c "CVE-\(201[0-9]\|202[0-3]\)-" "$pathtest/$name/$line" 2>/dev/null || echo "0")
+            total_old_cves=$((total_old_cves + old_cves))
+        fi
+    done < "$toip1"
+
+    {
+        echo "ESTATISTICAS DO FILTRO:"
+        echo "======================"
+        echo "Total de arquivos analisados: $total_files"
+        echo "Arquivos com CVEs 2024: $files_with_2024_cves"
+        echo "Arquivos com CVEs 2025: $files_with_2025_cves"
+        echo "Total CVEs 2024/2025 (analisados): $total_new_cves"
+        echo "Total CVEs antigos (ignorados): $total_old_cves"
+        echo "Eficiencia do filtro: $(( total_old_cves * 100 / (total_old_cves + total_new_cves) ))% de ruido removido"
+        echo ""
+
+        echo "JUSTIFICATIVA DO FILTRO:"
+        echo "======================="
+        echo "• CVEs 2010-2023: Provavelmente ja patchados em sistemas atualizados"
+        echo "• CVEs 2024/2025: Podem nao ter patches ainda, requerem atencao"
+        echo "• Foco em relevancia temporal e probabilidade real de exploracao"
+        echo ""
+    } >> "$report_file"
+
+    echo "Relatorio de filtro CVE gerado: $report_file" | tee -a "$tolog"
+}
+
+# Funcao adicional para limpar mensagens do log principal (opcional)
+update_log_messages() {
+    # Substituir mensagens com acentuacao no log
+    sed -i 's/Analisando/Analisando/g' "$tolog" 2>/dev/null || true
+    sed -i 's/configuração/configuracao/g' "$tolog" 2>/dev/null || true
+    sed -i 's/vulnerabilidade/vulnerabilidade/g' "$tolog" 2>/dev/null || true
+    sed -i 's/críticos/criticos/g' "$tolog" 2>/dev/null || true
+    sed -i 's/públicos/publicos/g' "$tolog" 2>/dev/null || true
+}
+
+# Funcao para atualizar mensagens do init (linha ~407)
+init_log_messages_without_accents() {
+    echo "BLACK BOX PENTEST INICIADO em $datetime!" | tee -a "$tolog"
+    echo "Dispositivo: $namepan" | tee -a "$tolog"
+    echo "Metodologia: Double Blind Black Box" | tee -a "$tolog"
+    echo "Filtro CVE: Apenas 2024 e 2025" | tee -a "$tolog"
+    echo "TCP Scope: Full scan 1-65535" | tee -a "$tolog"
+    echo "UDP Scope: Top 30 portas criticas corporativas" | tee -a "$tolog"
+}
+
+# Funcao para finalizar com mensagens sem acentuacao
+final_log_messages_without_accents() {
+    datetime2=$(date +"%d/%m/%y %H:%M")
+    echo "BLACK BOX PENTEST CONCLUIDO: $datetime ate $datetime2." | tee -a "$tolog"
+    echo "Analisando resultados para vulnerabilidades 2024/2025..." | tee -a "$tolog"
+    echo "Resultados completos em: $pathtest/$name" | tee -a "$tolog"
+    echo "Compactando resultados do Black Box..." | tee -a "$tolog"
+    echo "Limpando arquivos antigos..." | tee -a "$tolog"
+    echo "BLACK BOX PENETRATION TEST FINALIZADO!" | tee -a "$tolog"
+    echo "Relatorio HTML disponivel via web interface" | tee -a "$tolog"
+    echo "Metodologia: Double Blind Black Box Complete" | tee -a "$tolog"
+    echo "Cobertura: TCP 1-65535 + UDP Top 30 Critical" | tee -a "$tolog"
 }
 
 manage_ip_cache() {
@@ -1165,6 +1265,8 @@ function init {
     # Enhanced vulnerability detection
     echo "Analisando resultados para vulnerabilidades suspeitas..." | tee -a "$tolog"
     check_vulnerabilities
+    generate_cve_filter_report
+
     vuln_result=$?
 
     sleep 1
