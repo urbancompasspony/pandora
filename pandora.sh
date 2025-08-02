@@ -1,7 +1,7 @@
 #!/bin/bash
 ###################
 # Project Pandora #
-# Black Box Edition - SYNTAX ERRORS FIXED
+# Black Box Edition - ZOMBIE PROCESSES FIXED
 ################################################################################
 
 # CONFIGURAÇÕES BÁSICAS
@@ -15,6 +15,70 @@ zipfiles="$pidfile/Historico"
 statusfile="$pidfile/status.json"
 counterfile="$pidfile/counter.txt"
 control_yaml="$pidfile/controle.yaml"
+
+# Variáveis globais para controle de processos
+TIMEOUT_PID=""
+
+################################################################################
+
+# FUNÇÃO PARA LIMPEZA DE PROCESSOS ZUMBIS
+cleanup_zombies() {
+    echo "Limpando processos zumbis..." | tee -a "$tolog" 2>/dev/null || echo "Limpando processos zumbis..."
+    
+    # Matar timeout job se existir
+    if [ -n "$TIMEOUT_PID" ]; then
+        kill "$TIMEOUT_PID" 2>/dev/null
+        wait "$TIMEOUT_PID" 2>/dev/null
+        TIMEOUT_PID=""
+    fi
+    
+    # Matar todos os processos nmap
+    pkill -f nmap 2>/dev/null
+    
+    # Aguardar um momento para os processos terminarem
+    sleep 2
+    
+    # Força kill se ainda existirem
+    pkill -9 -f nmap 2>/dev/null
+    
+    # Aguardar todos os jobs background
+    while jobs %% 2>/dev/null; do
+        wait
+    done
+    
+    # Coletar processos filhos órfãos
+    wait 2>/dev/null
+}
+
+# FUNÇÃO PARA TRATAR SINAIS
+signal_handler() {
+    local signal=$1
+    echo "Recebido sinal $signal. Limpando processos..." | tee -a "$tolog" 2>/dev/null || echo "Recebido sinal $signal. Limpando processos..."
+    
+    cleanup_zombies
+    
+    # Status de interrupção
+    if [ -f "$statusfile" ]; then
+        cat > "$statusfile" << EOF
+{
+    "timestamp": "$(date '+%d-%m-%Y %H:%M')",
+    "status": "interrupted",
+    "progress": {"current": 0, "total": 0},
+    "vulnerabilities": 0,
+    "current_target": "INTERROMPIDO",
+    "device": "$namepan"
+}
+EOF
+    fi
+    
+    exit 1
+}
+
+# CONFIGURAR TRATAMENTO DE SINAIS
+trap 'signal_handler SIGTERM' TERM
+trap 'signal_handler SIGINT' INT
+trap 'signal_handler SIGQUIT' QUIT
+trap 'cleanup_zombies' EXIT
 
 ################################################################################
 
@@ -227,13 +291,18 @@ simple_black_box_scan() {
         return 1
     fi
 
-    # UDP scan em portas prioritárias (otimizado)
+    # UDP scan em portas prioritárias (otimizado) - SEM BACKGROUND JOBS
     echo "UDP scan em portas prioritárias para $ip..." | tee -a "$tolog"
     udp_results="$pathtest/$name/${ip}_udp"
 
-    # Scan UDP apenas portas mais comuns para evitar timeout excessivo
+    # Scan UDP apenas portas mais comuns - SEQUENCIAL
     timeout 600 nmap -Pn -sU -p 53,67,68,69,123,135,137,138,139,161,162,445,500,514,520,623,1434,1900,5353 \
         --min-rate 300 --max-retries 1 --host-timeout 300s -T2 "$ip" > "$udp_results" 2>&1
+
+    local udp_exit_code=$?
+    if [ "$udp_exit_code" -eq 124 ]; then
+        echo "UDP scan timeout para $ip" | tee -a "$tolog"
+    fi
 
     # Verificar portas abertas e extrair corretamente
     if [ -f "$tcp_results" ] && grep -q "open" "$tcp_results"; then
@@ -292,7 +361,7 @@ simple_black_box_scan() {
             # Scripts OBJETIVOS simplificados para evitar erro do NSE
             echo "Executando testes de vulnerabilidade TCP..." | tee -a "$tolog"
             
-            # Grupo 1: Autenticação e acesso básicos
+            # Grupo 1: Autenticação e acesso básicos - COM WAIT
             {
                 echo "# Grupo 1: Testes de Autenticação"
                 timeout 300 nmap -Pn -sS -sV --script "ftp-anon,mysql-empty-password,ssh-auth-methods" \
@@ -300,7 +369,10 @@ simple_black_box_scan() {
                 echo ""
             } >> "$final_results"
             
-            # Grupo 2: SMB vulnerabilidades críticas
+            # Aguardar conclusão antes do próximo
+            wait
+            
+            # Grupo 2: SMB vulnerabilidades críticas - COM WAIT
             {
                 echo "# Grupo 2: Vulnerabilidades SMB"
                 timeout 300 nmap -Pn -sS --script "smb-vuln-ms17-010,smb-vuln-ms08-067" \
@@ -308,13 +380,19 @@ simple_black_box_scan() {
                 echo ""
             } >> "$final_results"
             
-            # Grupo 3: HTTP básico
+            # Aguardar conclusão antes do próximo
+            wait
+            
+            # Grupo 3: HTTP básico - COM WAIT
             {
                 echo "# Grupo 3: Testes HTTP"
                 timeout 300 nmap -Pn -sS --script "http-default-accounts" \
                     --script-timeout 30s -T3 -p "$clean_tcp_ports" "$ip" 2>&1
                 echo ""
             } >> "$final_results"
+            
+            # Aguardar conclusão
+            wait
         fi
 
         if [ "$udp_open" = true ] && [ -n "$clean_udp_ports" ]; then
@@ -324,7 +402,7 @@ simple_black_box_scan() {
                 echo ""
             } >> "$final_results"
 
-            # Scripts UDP simples
+            # Scripts UDP simples - COM WAIT
             echo "Executando testes de vulnerabilidade UDP..." | tee -a "$tolog"
             {
                 echo "# Testes UDP"
@@ -332,6 +410,9 @@ simple_black_box_scan() {
                     --script-timeout 30s -T3 -p "$clean_udp_ports" "$ip" 2>&1
                 echo ""
             } >> "$final_results"
+            
+            # Aguardar conclusão
+            wait
         fi
 
         # Limpar arquivos temporários
@@ -542,16 +623,45 @@ init() {
 
     echo "Utilizando $RUNA jobs paralelos" | tee -a "$tolog"
 
-    # Timeout geral para scans
-    sleep 3600 && pkill nmap &
+    # Timeout geral para scans - CORRIGIDO para evitar zumbis
+    {
+        sleep 3600
+        echo "Timeout global atingido - matando processos nmap..." | tee -a "$tolog"
+        pkill -f nmap
+    } &
+    TIMEOUT_PID=$!
 
     # Exportar funções para parallel
     export -f simple_black_box_scan get_counter update_status_and_control is_recently_tested mark_ip_tested test_connectivity clean_port_list
     export pathtest name tolog counterfile statusfile toip1 namepan control_yaml
 
-    # Executar scans
+    # Executar scans com parallel - MÉTODO SEGURO
     echo "Iniciando scans..." | tee -a "$tolog"
-    cat "$toip1" | parallel -j "$RUNA" "simple_black_box_scan {}"
+    
+    # Usar parallel com controle de processos adequado
+    if command -v parallel >/dev/null 2>&1; then
+        cat "$toip1" | parallel -j "$RUNA" --will-cite "simple_black_box_scan {}"
+        
+        # Aguardar todos os jobs parallel terminarem
+        wait
+    else
+        # Fallback: executar sequencialmente se parallel não estiver disponível
+        echo "GNU parallel não encontrado, executando sequencialmente..." | tee -a "$tolog"
+        while read -r ip; do
+            simple_black_box_scan "$ip"
+        done < "$toip1"
+    fi
+
+    # Matar timeout job
+    if [ -n "$TIMEOUT_PID" ]; then
+        kill "$TIMEOUT_PID" 2>/dev/null
+        wait "$TIMEOUT_PID" 2>/dev/null
+        TIMEOUT_PID=""
+    fi
+
+    # Limpeza final de processos
+    echo "Aguardando conclusão de todos os processos..." | tee -a "$tolog"
+    cleanup_zombies
 
     # Finalização
     datetime2=$(date +"%d/%m/%y %H:%M")
@@ -606,6 +716,9 @@ EOF
 
     echo "BLACK BOX PENTEST FINALIZADO!" | tee -a "$tolog"
     rm -f "$counterfile"
+    
+    # Limpeza final
+    cleanup_zombies
 }
 
 # VERIFICAÇÃO DE ROOT
@@ -615,8 +728,8 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # INÍCIO
-echo "Project Pandora - Black Box Simplified & Fixed - SYNTAX CLEAN"
-echo "============================================================="
+echo "Project Pandora - Black Box Simplified & Fixed - ZOMBIE PROCESSES FIXED"
+echo "======================================================================="
 echo "✅ ICMP ping removido completamente"
 echo "✅ TCP scan: TODAS as portas (1-65535)"
 echo "✅ UDP scan: Portas prioritárias para otimização"
@@ -625,7 +738,12 @@ echo "✅ Port specification errors CORRIGIDOS"
 echo "✅ APENAS IPs - sem hostnames ou mDNS"
 echo "✅ Blacklist funcionando corretamente"
 echo "✅ Todos os erros de sintaxe CORRIGIDOS"
-echo "============================================================="
+echo "✅ Processos zumbis ELIMINADOS"
+echo "✅ Tratamento de sinais implementado"
+echo "======================================================================="
 init
 echo "Pentest finalizado!"
+
+# Limpeza final antes de sair
+cleanup_zombies
 exit 0
