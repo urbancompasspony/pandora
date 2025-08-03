@@ -57,10 +57,10 @@ if [ ! -f "/Pentests/index.html" ]; then
             <div class="card scope-info">
                 <h3>🔬 Escopo de Scanning</h3>
                 <div class="terminal">
-                    <div class="terminal-line"><span class="terminal-label">TCP:</span> 1-65535 (Full Range)</div>
-                    <div class="terminal-line"><span class="terminal-label">UDP:</span> Top 30 Critical Corporate</div>
-                    <div class="terminal-line"><span class="terminal-label">Scripts:</span> vuln,safe,discovery,auth,brute</div>
-                    <div class="terminal-line"><span class="terminal-label">Method:</span> Double Blind Assessment</div>
+                    <div class="terminal-line"><span class="terminal-label">TCP:</span> 1-65535 (Stealth SYN Scan)</div>
+                    <div class="terminal-line"><span class="terminal-label">UDP:</span> 19 Portas Críticas (DNS,DHCP,SNMP,SMB,etc)</div>
+                    <div class="terminal-line"><span class="terminal-label">Scripts:</span> ftp-anon,mysql-empty-password,smb-vuln-*,http-default-accounts</div>
+                    <div class="terminal-line"><span class="terminal-label">Method:</span> No-PING Black Box + TCP Connectivity Test</div>
                 </div>
             </div>
         </div>
