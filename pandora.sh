@@ -118,7 +118,6 @@ get_counter() {
 init_control_yaml() {
     if [ ! -f "$control_yaml" ]; then
         cat > "$control_yaml" << 'EOF'
-IPs_Identificados: {}
 IPs_testados: {}
 EOF
     fi
@@ -169,6 +168,21 @@ mark_ip_tested() {
         # Atualizar ambos os blocos
         yq eval ".IPs_Identificados.\"$ip\" = \"sim\"" -i "$control_yaml" 2>/dev/null
         yq eval ".IPs_testados.\"$ip\" = $current_time" -i "$control_yaml" 2>/dev/null
+    fi
+}
+
+mark_ip_tested() {
+    local ip=$1
+    local current_time
+
+    current_time=$(date +%s)
+
+    # Verificar se yq esta disponivel
+    if command -v yq >/dev/null 2>&1; then
+        echo "✅ Marcando $ip como testado com sucesso (epoch: $current_time)" | tee -a "$tolog"
+        yq eval ".IPs_testados.\"$ip\" = $current_time" -i "$control_yaml" 2>/dev/null
+    else
+        echo "⚠️ yq nao disponivel - controle YAML desabilitado" | tee -a "$tolog"
     fi
 }
 
@@ -494,14 +508,17 @@ full_host_scan() {
             echo "Vulnerabilidades encontradas em $ip" | tee -a "$tolog"
         fi
 
-        # Marcar IP como testado
+        # Marcar IP como testado (sucesso com portas)
         mark_ip_tested "$ip"
+        echo "✅ IP $ip testado com sucesso - não será testado nas próximas 48h" | tee -a "$tolog"
         return 0
     else
-        echo "Nenhuma porta aberta em $ip" | tee -a "$tolog"
+        echo "🚫 Nenhuma porta aberta em $ip" | tee -a "$tolog"
         echo "Nenhuma porta aberta encontrada" > "$pathtest/$name/$ip"
+        # Host respondeu mas sem portas = teste bem-sucedido
         mark_ip_tested "$ip"
-        return 1
+        echo "✅ IP $ip testado com sucesso (sem portas) - não será testado nas próximas 48h" | tee -a "$tolog"
+        return 0  # Mudança: return 0 em vez de return 1
     fi
 }
 
