@@ -487,13 +487,13 @@ if [ ! -f "/Pentests/index.html" ]; then
 
             <div class="scope-phase">
                 <div class="scope-phase-header" onclick="togglePhase(this)">
-                    <span>🔓 FASE 3: Testes de Autenticação</span>
+                    <span>🔓 FASE 3: Testes de Autenticacao</span>
                     <span class="toggle-arrow">▶</span>
                 </div>
                 <div class="scope-phase-content">
                     <div class="test-item vulnerable">
                         <div class="test-code">ftp-anon</div>
-                        <div class="test-desc">Login FTP anônimo (anonymous/anonymous)</div>
+                        <div class="test-desc">Login FTP anonimo (anonymous/anonymous)</div>
                     </div>
                     <div class="test-item vulnerable">
                         <div class="test-code">mysql-empty-password</div>
@@ -501,18 +501,18 @@ if [ ! -f "/Pentests/index.html" ]; then
                     </div>
                     <div class="test-item">
                         <div class="test-code">ssh-auth-methods</div>
-                        <div class="test-desc">Métodos de autenticação SSH</div>
+                        <div class="test-desc">Metodos de autenticacao SSH</div>
                     </div>
                     <div class="test-item">
                         <div class="test-code">telnet-ntlm-info</div>
-                        <div class="test-desc">Informações NTLM via Telnet</div>
+                        <div class="test-desc">Informacoes NTLM via Telnet</div>
                     </div>
                 </div>
             </div>
 
             <div class="scope-phase">
                 <div class="scope-phase-header" onclick="togglePhase(this)">
-                    <span>🛡️ FASE 4: Vulnerabilidades SMB Críticas</span>
+                    <span>🛡️ FASE 4: Vulnerabilidades SMB Criticas</span>
                     <span class="toggle-arrow">▶</span>
                 </div>
                 <div class="scope-phase-content">
@@ -522,7 +522,7 @@ if [ ! -f "/Pentests/index.html" ]; then
                     </div>
                     <div class="test-item vulnerable">
                         <div class="test-code">smb-vuln-ms08-067</div>
-                        <div class="test-desc">Conficker - Buffer overflow crítico</div>
+                        <div class="test-desc">Conficker - Buffer overflow critico</div>
                     </div>
                     <div class="test-item vulnerable">
                         <div class="test-code">smb-vuln-ms10-054</div>
@@ -530,7 +530,7 @@ if [ ! -f "/Pentests/index.html" ]; then
                     </div>
                     <div class="test-item vulnerable">
                         <div class="test-code">smb-vuln-ms10-061</div>
-                        <div class="test-desc">Print Spooler - Escalação para SYSTEM</div>
+                        <div class="test-desc">Print Spooler - Escalacao para SYSTEM</div>
                     </div>
                 </div>
             </div>
@@ -543,19 +543,19 @@ if [ ! -f "/Pentests/index.html" ]; then
                 <div class="scope-phase-content">
                     <div class="test-item vulnerable">
                         <div class="test-code">http-default-accounts</div>
-                        <div class="test-desc">Credenciais padrão (admin/admin, root/root)</div>
+                        <div class="test-desc">Credenciais padrao (admin/admin, root/root)</div>
                     </div>
                     <div class="test-item">
                         <div class="test-code">http-methods</div>
-                        <div class="test-desc">Métodos HTTP perigosos (PUT, DELETE)</div>
+                        <div class="test-desc">Metodos HTTP perigosos (PUT, DELETE)</div>
                     </div>
                     <div class="test-item">
                         <div class="test-code">http-enum</div>
-                        <div class="test-desc">Brute force de diretórios (/admin, /config)</div>
+                        <div class="test-desc">Brute force de diretorios (/admin, /config)</div>
                     </div>
                     <div class="test-item">
                         <div class="test-code">http-robots.txt</div>
-                        <div class="test-desc">Diretórios ocultos via robots.txt</div>
+                        <div class="test-desc">Diretorios ocultos via robots.txt</div>
                     </div>
                 </div>
             </div>
@@ -593,7 +593,7 @@ if [ ! -f "/Pentests/index.html" ]; then
                     </div>
                     <div class="test-item">
                         <div class="test-code">vnc-info</div>
-                        <div class="test-desc">Informações VNC e senhas fracas</div>
+                        <div class="test-desc">Informacoes VNC e senhas fracas</div>
                     </div>
                     <div class="test-item">
                         <div class="test-code">snmp-info</div>
@@ -601,7 +601,7 @@ if [ ! -f "/Pentests/index.html" ]; then
                     </div>
                     <div class="test-item">
                         <div class="test-code">dns-zone-transfer</div>
-                        <div class="test-desc">Transferência de zona DNS</div>
+                        <div class="test-desc">Transferencia de zona DNS</div>
                     </div>
                     <div class="test-item">
                         <div class="test-code">dhcp-discover</div>
@@ -609,7 +609,7 @@ if [ ! -f "/Pentests/index.html" ]; then
                     </div>
                     <div class="test-item">
                         <div class="test-code">ntp-info</div>
-                        <div class="test-desc">Informações NTP</div>
+                        <div class="test-desc">Informacoes NTP</div>
                     </div>
                 </div>
             </div>
@@ -624,14 +624,14 @@ if [ ! -f "/Pentests/index.html" ]; then
             </div>
 
             <div class="card info">
-                <h3>🎯 Critérios de Vulnerabilidade</h3>
-                <p><strong>Apenas ameaças REAIS aparecem em "Possíveis Vulnerabilidades":</strong></p>
+                <h3>🎯 Criterios de Vulnerabilidade</h3>
+                <p><strong>Apenas ameacas REAIS aparecem em "Possiveis Vulnerabilidades":</strong></p>
                 <div class="terminal">
                     <div class="terminal-line">✅ Exploit confirmado ("VULNERABLE")</div>
-                    <div class="terminal-line">✅ Login anônimo funcionando</div>
-                    <div class="terminal-line">✅ Senhas padrão/vazias funcionais</div>
-                    <div class="terminal-line">✅ Bypass de autenticação</div>
-                    <div class="terminal-line">✅ CVEs específicos confirmados</div>
+                    <div class="terminal-line">✅ Login anonimo funcionando</div>
+                    <div class="terminal-line">✅ Senhas padrao/vazias funcionais</div>
+                    <div class="terminal-line">✅ Bypass de autenticacao</div>
+                    <div class="terminal-line">✅ CVEs especificos confirmados</div>
                 </div>
             </div>
         </div>

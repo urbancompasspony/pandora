@@ -510,15 +510,15 @@ full_host_scan() {
 
         # Marcar IP como testado (sucesso com portas)
         mark_ip_tested "$ip"
-        echo "✅ IP $ip testado com sucesso - não será testado nas próximas 48h" | tee -a "$tolog"
+        echo "✅ IP $ip testado com sucesso - nao sera testado nas proximas 48h" | tee -a "$tolog"
         return 0
     else
         echo "🚫 Nenhuma porta aberta em $ip" | tee -a "$tolog"
         echo "Nenhuma porta aberta encontrada" > "$pathtest/$name/$ip"
         # Host respondeu mas sem portas = teste bem-sucedido
         mark_ip_tested "$ip"
-        echo "✅ IP $ip testado com sucesso (sem portas) - não será testado nas próximas 48h" | tee -a "$tolog"
-        return 0  # Mudança: return 0 em vez de return 1
+        echo "✅ IP $ip testado com sucesso (sem portas) - nao sera testado nas proximas 48h" | tee -a "$tolog"
+        return 0  # Mudanca: return 0 em vez de return 1
     fi
 }
 
