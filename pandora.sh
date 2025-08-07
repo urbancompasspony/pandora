@@ -604,7 +604,7 @@ init() {
     echo "=== PASSO 3: FILTRANDO HOSTS TESTADOS RECENTEMENTE ===" | tee -a "$tolog"
     true > "$toip1"
     while read -r ip; do
-        if [ -n "$ip" ] && ! is_recently_tested "$ip"; then
+        if [ -n "$ip" ] && is_recently_tested "$ip"; then
             echo "$ip" >> "$toip1"
             echo "IP $ip elegivel para teste" | tee -a "$tolog"
         elif [ -n "$ip" ]; then
