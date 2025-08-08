@@ -114,16 +114,24 @@ get_counter() {
     echo "$counter"
 }
 
-# FUNCOES DE CONTROLE YAML
 init_control_yaml() {
     if [ ! -f "$control_yaml" ]; then
+        echo "📄 Criando arquivo de controle YAML..." | tee -a "$tolog"
         cat > "$control_yaml" << 'EOF'
+# Project Pandora - Controle de IPs testados
+# Formato: IP -> timestamp epoch
 IPs_testados: {}
 EOF
     fi
+
+    # Verificar se o arquivo foi criado corretamente
+    if [ -f "$control_yaml" ]; then
+        echo "✅ Arquivo de controle YAML pronto" | tee -a "$tolog"
+    else
+        echo "❌ Erro ao criar arquivo de controle YAML" | tee -a "$tolog"
+    fi
 }
 
-# VERIFICAR SE IP FOI TESTADO NAS ULTIMAS 48H
 is_recently_tested() {
     local ip=$1
     local current_time
@@ -132,42 +140,64 @@ is_recently_tested() {
 
     current_time=$(date +%s)
 
-    # Verificar se yq esta disponivel
-    if ! command -v yq >/dev/null 2>&1; then
-        return 1  # yq nao disponivel, permite teste
-    fi
+    # Método 1: Usar yq se disponível
+    if command -v yq >/dev/null 2>&1 && [ -f "$control_yaml" ]; then
+        # Verificar se IP existe no YAML
+        test_time=$(yq eval ".IPs_testados.\"$ip\"" "$control_yaml" 2>/dev/null)
 
-    # Verificar se IP existe no YAML e pegar epoch time
-    if yq eval ".IPs_testados.\"$ip\"" "$control_yaml" 2>/dev/null | grep -q "null"; then
-        return 1  # IP nao foi testado
-    fi
+        # Debug
+        echo "🔍 Verificando IP $ip: test_time='$test_time'" | tee -a "$tolog"
 
-    test_time=$(yq eval ".IPs_testados.\"$ip\"" "$control_yaml" 2>/dev/null)
-    if [ -z "$test_time" ] || [ "$test_time" = "null" ]; then
-        return 1  # IP nao foi testado
-    fi
+        if [ "$test_time" = "null" ] || [ -z "$test_time" ] || [ "$test_time" = "0" ]; then
+            echo "📋 IP $ip nunca foi testado (YAML)" | tee -a "$tolog"
+            return 1  # IP não foi testado
+        fi
 
-    diff_hours=$(( (current_time - test_time) / 3600 ))
+        # Verificar se é um número válido
+        if ! echo "$test_time" | grep -q '^[0-9]\+$'; then
+            echo "⚠️ Timestamp inválido para IP $ip: '$test_time'" | tee -a "$tolog"
+            return 1  # Timestamp inválido, permitir teste
+        fi
 
-    if [ "$diff_hours" -lt 48 ]; then
-        return 0  # Foi testado ha menos de 48h
+        diff_hours=$(( (current_time - test_time) / 3600 ))
+        echo "⏱️ IP $ip testado há $diff_hours horas" | tee -a "$tolog"
+
+        if [ "$diff_hours" -lt 48 ]; then
+            echo "🚫 IP $ip testado recentemente (${diff_hours}h < 48h)" | tee -a "$tolog"
+            return 0  # Foi testado há menos de 48h
+        else
+            echo "✅ IP $ip pode ser testado novamente (${diff_hours}h >= 48h)" | tee -a "$tolog"
+            return 1  # Pode ser testado novamente
+        fi
+
+    # Método 2: Fallback usando arquivo simples
+    elif [ -f "$pidfile/ips_testados_fallback.txt" ]; then
+        echo "🔄 Usando fallback (arquivo simples) para verificar IP $ip" | tee -a "$tolog"
+
+        if grep -q "^$ip:" "$pidfile/ips_testados_fallback.txt"; then
+            test_time=$(grep "^$ip:" "$pidfile/ips_testados_fallback.txt" | tail -1 | cut -d':' -f2)
+
+            if [ -n "$test_time" ] && echo "$test_time" | grep -q '^[0-9]\+$'; then
+                diff_hours=$(( (current_time - test_time) / 3600 ))
+                echo "⏱️ IP $ip testado há $diff_hours horas (fallback)" | tee -a "$tolog"
+
+                if [ "$diff_hours" -lt 48 ]; then
+                    echo "🚫 IP $ip testado recentemente (fallback: ${diff_hours}h < 48h)" | tee -a "$tolog"
+                    return 0  # Foi testado há menos de 48h
+                else
+                    echo "✅ IP $ip pode ser testado novamente (fallback: ${diff_hours}h >= 48h)" | tee -a "$tolog"
+                    return 1  # Pode ser testado novamente
+                fi
+            fi
+        fi
+
+        echo "📋 IP $ip nunca foi testado (fallback)" | tee -a "$tolog"
+        return 1  # IP não encontrado no fallback
+
+    # Método 3: Nenhum controle disponível
     else
-        return 1  # Pode ser testado novamente
-    fi
-}
-
-# MARCAR IP COMO TESTADO COM SUCESSO
-mark_ip_tested() {
-    local ip=$1
-    local current_time
-
-    current_time=$(date +%s)
-
-    # Verificar se yq esta disponivel
-    if command -v yq >/dev/null 2>&1; then
-        # Atualizar ambos os blocos
-        yq eval ".IPs_Identificados.\"$ip\" = \"sim\"" -i "$control_yaml" 2>/dev/null
-        yq eval ".IPs_testados.\"$ip\" = $current_time" -i "$control_yaml" 2>/dev/null
+        echo "⚠️ Nenhum método de controle disponível - permitindo teste de $ip" | tee -a "$tolog"
+        return 1  # Sem controle, permite teste
     fi
 }
 
@@ -177,12 +207,20 @@ mark_ip_tested() {
 
     current_time=$(date +%s)
 
-    # Verificar se yq esta disponivel
     if command -v yq >/dev/null 2>&1; then
         echo "✅ Marcando $ip como testado com sucesso (epoch: $current_time)" | tee -a "$tolog"
-        yq eval ".IPs_testados.\"$ip\" = $current_time" -i "$control_yaml" 2>/dev/null
+        # Garantir que o arquivo YAML existe e tem estrutura correta
+        if [ ! -f "$control_yaml" ]; then
+            init_control_yaml
+        fi
+        # Adicionar o IP com timestamp atual
+        yq eval ".IPs_testados.\"$ip\" = $current_time" -i "$control_yaml" 2>/dev/null || {
+            echo "⚠️ Erro ao salvar IP $ip no controle YAML" | tee -a "$tolog"
+        }
     else
         echo "⚠️ yq nao disponivel - controle YAML desabilitado" | tee -a "$tolog"
+        # Fallback: usar arquivo simples
+        echo "$ip:$current_time" >> "$pidfile/ips_testados_fallback.txt"
     fi
 }
 
@@ -720,16 +758,6 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # INICIO
-echo "Project Pandora - Black Box Simplified & Fixed"
-echo "=============================================="
-echo "✅ Descoberta de hosts online: PING + TCP SYN + UDP"
-echo "✅ Scan individual: host por host"
-echo "✅ Scan de portas: TCP (1-65535) + UDP (prioritarias)"
-echo "✅ Pentests: apenas em portas abertas"
-echo "✅ Sem acentuacao e cedilha"
-echo "✅ Processos zumbis eliminados"
-echo "✅ Tratamento de sinais implementado"
-echo "=============================================="
 
 # Exportar funcoes para uso em subprocessos se necessario
 export -f full_host_scan scan_open_ports run_vulnerability_tests check_real_vulnerabilities
