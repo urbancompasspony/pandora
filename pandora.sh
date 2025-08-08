@@ -116,7 +116,7 @@ get_counter() {
 
 init_control_yaml() {
     if [ ! -f "$control_yaml" ]; then
-        echo "📄 Criando arquivo de controle YAML..." | tee -a "$tolog"
+        echo "Criando arquivo de controle YAML..." | tee -a "$tolog"
         cat > "$control_yaml" << 'EOF'
 # Project Pandora - Controle de IPs testados
 # Formato: IP -> timestamp epoch
@@ -126,9 +126,9 @@ EOF
 
     # Verificar se o arquivo foi criado corretamente
     if [ -f "$control_yaml" ]; then
-        echo "✅ Arquivo de controle YAML pronto" | tee -a "$tolog"
+        echo "Arquivo de controle YAML pronto" | tee -a "$tolog"
     else
-        echo "❌ Erro ao criar arquivo de controle YAML" | tee -a "$tolog"
+        echo "Erro ao criar arquivo de controle YAML" | tee -a "$tolog"
     fi
 }
 
@@ -140,63 +140,63 @@ is_recently_tested() {
 
     current_time=$(date +%s)
 
-    # Método 1: Usar yq se disponível
+    # Metodo 1: Usar yq se disponivel
     if command -v yq >/dev/null 2>&1 && [ -f "$control_yaml" ]; then
         # Verificar se IP existe no YAML
         test_time=$(yq eval ".IPs_testados.\"$ip\"" "$control_yaml" 2>/dev/null)
 
         # Debug
-        echo "🔍 Verificando IP $ip: test_time='$test_time'" | tee -a "$tolog"
+        echo "Verificando IP $ip: test_time='$test_time'" | tee -a "$tolog"
 
         if [ "$test_time" = "null" ] || [ -z "$test_time" ] || [ "$test_time" = "0" ]; then
-            echo "📋 IP $ip nunca foi testado (YAML)" | tee -a "$tolog"
-            return 1  # IP não foi testado
+            echo "IP $ip nunca foi testado (YAML)" | tee -a "$tolog"
+            return 1  # IP nao foi testado
         fi
 
-        # Verificar se é um número válido
+        # Verificar se e um numero valido
         if ! echo "$test_time" | grep -q '^[0-9]\+$'; then
-            echo "⚠️ Timestamp inválido para IP $ip: '$test_time'" | tee -a "$tolog"
-            return 1  # Timestamp inválido, permitir teste
+            echo "Timestamp invalido para IP $ip: '$test_time'" | tee -a "$tolog"
+            return 1  # Timestamp invalido, permitir teste
         fi
 
         diff_hours=$(( (current_time - test_time) / 3600 ))
-        echo "⏱️ IP $ip testado há $diff_hours horas" | tee -a "$tolog"
+        echo "IP $ip testado ha $diff_hours horas" | tee -a "$tolog"
 
         if [ "$diff_hours" -lt 48 ]; then
-            echo "🚫 IP $ip testado recentemente (${diff_hours}h < 48h)" | tee -a "$tolog"
-            return 0  # Foi testado há menos de 48h
+            echo "IP $ip testado recentemente (${diff_hours}h < 48h)" | tee -a "$tolog"
+            return 0  # Foi testado ha menos de 48h
         else
-            echo "✅ IP $ip pode ser testado novamente (${diff_hours}h >= 48h)" | tee -a "$tolog"
+            echo "IP $ip pode ser testado novamente (${diff_hours}h >= 48h)" | tee -a "$tolog"
             return 1  # Pode ser testado novamente
         fi
 
-    # Método 2: Fallback usando arquivo simples
+    # Metodo 2: Fallback usando arquivo simples
     elif [ -f "$pidfile/ips_testados_fallback.txt" ]; then
-        echo "🔄 Usando fallback (arquivo simples) para verificar IP $ip" | tee -a "$tolog"
+        echo "Usando fallback (arquivo simples) para verificar IP $ip" | tee -a "$tolog"
 
         if grep -q "^$ip:" "$pidfile/ips_testados_fallback.txt"; then
             test_time=$(grep "^$ip:" "$pidfile/ips_testados_fallback.txt" | tail -1 | cut -d':' -f2)
 
             if [ -n "$test_time" ] && echo "$test_time" | grep -q '^[0-9]\+$'; then
                 diff_hours=$(( (current_time - test_time) / 3600 ))
-                echo "⏱️ IP $ip testado há $diff_hours horas (fallback)" | tee -a "$tolog"
+                echo "IP $ip testado ha $diff_hours horas (fallback)" | tee -a "$tolog"
 
                 if [ "$diff_hours" -lt 48 ]; then
-                    echo "🚫 IP $ip testado recentemente (fallback: ${diff_hours}h < 48h)" | tee -a "$tolog"
-                    return 0  # Foi testado há menos de 48h
+                    echo "IP $ip testado recentemente (fallback: ${diff_hours}h < 48h)" | tee -a "$tolog"
+                    return 0  # Foi testado ha menos de 48h
                 else
-                    echo "✅ IP $ip pode ser testado novamente (fallback: ${diff_hours}h >= 48h)" | tee -a "$tolog"
+                    echo "IP $ip pode ser testado novamente (fallback: ${diff_hours}h >= 48h)" | tee -a "$tolog"
                     return 1  # Pode ser testado novamente
                 fi
             fi
         fi
 
-        echo "📋 IP $ip nunca foi testado (fallback)" | tee -a "$tolog"
-        return 1  # IP não encontrado no fallback
+        echo "IP $ip nunca foi testado (fallback)" | tee -a "$tolog"
+        return 1  # IP nao encontrado no fallback
 
-    # Método 3: Nenhum controle disponível
+    # Metodo 3: Nenhum controle disponivel
     else
-        echo "⚠️ Nenhum método de controle disponível - permitindo teste de $ip" | tee -a "$tolog"
+        echo "Nenhum metodo de controle disponivel - permitindo teste de $ip" | tee -a "$tolog"
         return 1  # Sem controle, permite teste
     fi
 }
@@ -208,17 +208,17 @@ mark_ip_tested() {
     current_time=$(date +%s)
 
     if command -v yq >/dev/null 2>&1; then
-        echo "✅ Marcando $ip como testado com sucesso (epoch: $current_time)" | tee -a "$tolog"
+        echo "Marcando $ip como testado com sucesso (epoch: $current_time)" | tee -a "$tolog"
         # Garantir que o arquivo YAML existe e tem estrutura correta
         if [ ! -f "$control_yaml" ]; then
             init_control_yaml
         fi
         # Adicionar o IP com timestamp atual
         yq eval ".IPs_testados.\"$ip\" = $current_time" -i "$control_yaml" 2>/dev/null || {
-            echo "⚠️ Erro ao salvar IP $ip no controle YAML" | tee -a "$tolog"
+            echo "Erro ao salvar IP $ip no controle YAML" | tee -a "$tolog"
         }
     else
-        echo "⚠️ yq nao disponivel - controle YAML desabilitado" | tee -a "$tolog"
+        echo "yq nao disponivel - controle YAML desabilitado" | tee -a "$tolog"
         # Fallback: usar arquivo simples
         echo "$ip:$current_time" >> "$pidfile/ips_testados_fallback.txt"
     fi
@@ -349,78 +349,49 @@ run_vulnerability_tests() {
 
     # Testes TCP
     if [ -n "$tcp_ports" ]; then
+        # Executar todos os testes TCP e consolidar output
         {
             echo "=== TCP VULNERABILITY TESTS ==="
-
-            # Grupo 1: Autenticacao e acesso basicos
+            echo ""
             echo "# Testes de Autenticacao"
-        } >> "$vuln_results"
-
-        timeout 300 nmap -Pn -sS -sV \
-            --script "ftp-anon,mysql-empty-password,ssh-auth-methods,telnet-ntlm-info" \
-            --script-timeout 30s -T3 -p "$tcp_ports" "$ip" >> "$vuln_results" 2>&1
-
-        {
+            timeout 300 nmap -Pn -sS -sV \
+                --script "ftp-anon,mysql-empty-password,ssh-auth-methods,telnet-ntlm-info" \
+                --script-timeout 30s -T3 -p "$tcp_ports" "$ip" 2>&1
             echo ""
-
-            # Grupo 2: SMB vulnerabilidades criticas
             echo "# Vulnerabilidades SMB"
-        } >> "$vuln_results"
-
-        timeout 300 nmap -Pn -sS \
-            --script "smb-vuln-ms17-010,smb-vuln-ms08-067,smb-vuln-ms10-054,smb-vuln-ms10-061" \
-            --script-timeout 30s -T3 -p "$tcp_ports" "$ip" >> "$vuln_results" 2>&1
-
-        {
+            timeout 300 nmap -Pn -sS \
+                --script "smb-vuln-ms17-010,smb-vuln-ms08-067,smb-vuln-ms10-054,smb-vuln-ms10-061" \
+                --script-timeout 30s -T3 -p "$tcp_ports" "$ip" 2>&1
             echo ""
-
-            # Grupo 3: HTTP vulnerabilidades
             echo "# Testes HTTP"
-        } >> "$vuln_results"
-
-        timeout 300 nmap -Pn -sS \
-            --script "http-default-accounts,http-methods,http-enum,http-robots.txt" \
-            --script-timeout 30s -T3 -p "$tcp_ports" "$ip" >> "$vuln_results" 2>&1
-
-        {
+            timeout 300 nmap -Pn -sS \
+                --script "http-default-accounts,http-methods,http-enum,http-robots.txt" \
+                --script-timeout 30s -T3 -p "$tcp_ports" "$ip" 2>&1
             echo ""
-
-            # Grupo 4: Database vulnerabilidades
             echo "# Testes Database"
-        } >> "$vuln_results"
-
-        timeout 300 nmap -Pn -sS \
-            --script "mysql-vuln-cve2012-2122,ms-sql-empty-password,oracle-sid-brute" \
-            --script-timeout 30s -T3 -p "$tcp_ports" "$ip" >> "$vuln_results" 2>&1
-
-        {
+            timeout 300 nmap -Pn -sS \
+                --script "mysql-vuln-cve2012-2122,ms-sql-empty-password,oracle-sid-brute" \
+                --script-timeout 30s -T3 -p "$tcp_ports" "$ip" 2>&1
             echo ""
-
-            # Grupo 5: RDP e VNC
             echo "# Testes RDP/VNC"
+            timeout 300 nmap -Pn -sS \
+                --script "rdp-vuln-ms12-020,vnc-info" \
+                --script-timeout 30s -T3 -p "$tcp_ports" "$ip" 2>&1
+            echo ""
         } >> "$vuln_results"
-
-        timeout 300 nmap -Pn -sS \
-            --script "rdp-vuln-ms12-020,vnc-info" \
-            --script-timeout 30s -T3 -p "$tcp_ports" "$ip" >> "$vuln_results" 2>&1
-
-        echo "" >> "$vuln_results"
     fi
 
     # Testes UDP
     if [ -n "$udp_ports" ]; then
         {
             echo "=== UDP VULNERABILITY TESTS ==="
-
-            # Scripts UDP simples
+            echo ""
             echo "# Testes UDP"
+            timeout 300 nmap -Pn -sU \
+                --script "snmp-info,dns-zone-transfer,dhcp-discover,ntp-info" \
+                --script-timeout 30s -T3 -p "$udp_ports" "$ip" 2>&1
+            echo ""
         } >> "$vuln_results"
-
-        timeout 300 nmap -Pn -sU \
-            --script "snmp-info,dns-zone-transfer,dhcp-discover,ntp-info" \
-            --script-timeout 30s -T3 -p "$udp_ports" "$ip" >> "$vuln_results" 2>&1
-
-        echo "" >> "$vuln_results"
     fi
 
     echo "Testes de vulnerabilidade concluidos para $ip" | tee -a "$tolog"
@@ -548,14 +519,14 @@ full_host_scan() {
 
         # Marcar IP como testado (sucesso com portas)
         mark_ip_tested "$ip"
-        echo "✅ IP $ip testado com sucesso - nao sera testado nas proximas 48h" | tee -a "$tolog"
+        echo "IP $ip testado com sucesso - nao sera testado nas proximas 48h" | tee -a "$tolog"
         return 0
     else
-        echo "🚫 Nenhuma porta aberta em $ip" | tee -a "$tolog"
+        echo "Nenhuma porta aberta em $ip" | tee -a "$tolog"
         echo "Nenhuma porta aberta encontrada" > "$pathtest/$name/$ip"
         # Host respondeu mas sem portas = teste bem-sucedido
         mark_ip_tested "$ip"
-        echo "✅ IP $ip testado com sucesso (sem portas) - nao sera testado nas proximas 48h" | tee -a "$tolog"
+        echo "IP $ip testado com sucesso (sem portas) - nao sera testado nas proximas 48h" | tee -a "$tolog"
         return 0  # Mudanca: return 0 em vez de return 1
     fi
 }
