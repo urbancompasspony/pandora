@@ -140,64 +140,21 @@ is_recently_tested() {
 
     current_time=$(date +%s)
 
-    # Metodo 1: Usar yq se disponivel
-    if command -v yq >/dev/null 2>&1 && [ -f "$control_yaml" ]; then
-        # Verificar se IP existe no YAML
-        test_time=$(yq eval ".IPs_testados.\"$ip\"" "$control_yaml" 2>/dev/null)
+    # Verificar se IP existe no YAML
+    test_time=$(yq eval ".IPs_testados.\"$ip\"" "$control_yaml" 2>/dev/null)
 
-        # Debug
-        echo "Verificando IP $ip: test_time='$test_time'" | tee -a "$tolog"
+    if [ "$test_time" = "null" ] || [ -z "$test_time" ] || [ "$test_time" = "0" ]; then
+        return 1  # IP nao foi testado
+    fi
 
-        if [ "$test_time" = "null" ] || [ -z "$test_time" ] || [ "$test_time" = "0" ]; then
-            echo "IP $ip nunca foi testado (YAML)" | tee -a "$tolog"
-            return 1  # IP nao foi testado
-        fi
+    diff_hours=$(( (current_time - test_time) / 3600 ))
 
-        # Verificar se e um numero valido
-        if ! echo "$test_time" | grep -q '^[0-9]\+$'; then
-            echo "Timestamp invalido para IP $ip: '$test_time'" | tee -a "$tolog"
-            return 1  # Timestamp invalido, permitir teste
-        fi
-
-        diff_hours=$(( (current_time - test_time) / 3600 ))
-        echo "IP $ip testado ha $diff_hours horas" | tee -a "$tolog"
-
-        if [ "$diff_hours" -lt 48 ]; then
-            echo "IP $ip testado recentemente (${diff_hours}h < 48h)" | tee -a "$tolog"
-            return 0  # Foi testado ha menos de 48h
-        else
-            echo "IP $ip pode ser testado novamente (${diff_hours}h >= 48h)" | tee -a "$tolog"
-            return 1  # Pode ser testado novamente
-        fi
-
-    # Metodo 2: Fallback usando arquivo simples
-    elif [ -f "$pidfile/ips_testados_fallback.txt" ]; then
-        echo "Usando fallback (arquivo simples) para verificar IP $ip" | tee -a "$tolog"
-
-        if grep -q "^$ip:" "$pidfile/ips_testados_fallback.txt"; then
-            test_time=$(grep "^$ip:" "$pidfile/ips_testados_fallback.txt" | tail -1 | cut -d':' -f2)
-
-            if [ -n "$test_time" ] && echo "$test_time" | grep -q '^[0-9]\+$'; then
-                diff_hours=$(( (current_time - test_time) / 3600 ))
-                echo "IP $ip testado ha $diff_hours horas (fallback)" | tee -a "$tolog"
-
-                if [ "$diff_hours" -lt 48 ]; then
-                    echo "IP $ip testado recentemente (fallback: ${diff_hours}h < 48h)" | tee -a "$tolog"
-                    return 0  # Foi testado ha menos de 48h
-                else
-                    echo "IP $ip pode ser testado novamente (fallback: ${diff_hours}h >= 48h)" | tee -a "$tolog"
-                    return 1  # Pode ser testado novamente
-                fi
-            fi
-        fi
-
-        echo "IP $ip nunca foi testado (fallback)" | tee -a "$tolog"
-        return 1  # IP nao encontrado no fallback
-
-    # Metodo 3: Nenhum controle disponivel
+    if [ "$diff_hours" -lt 48 ]; then
+        echo "IP $ip testado recentemente (${diff_hours}h < 48h)" | tee -a "$tolog"
+        return 0  # Foi testado ha menos de 48h
     else
-        echo "Nenhum metodo de controle disponivel - permitindo teste de $ip" | tee -a "$tolog"
-        return 1  # Sem controle, permite teste
+        echo "IP $ip pode ser testado novamente (${diff_hours}h >= 48h)" | tee -a "$tolog"
+        return 1  # Pode ser testado novamente
     fi
 }
 
@@ -207,21 +164,15 @@ mark_ip_tested() {
 
     current_time=$(date +%s)
 
-    if command -v yq >/dev/null 2>&1; then
-        echo "Marcando $ip como testado com sucesso (epoch: $current_time)" | tee -a "$tolog"
-        # Garantir que o arquivo YAML existe e tem estrutura correta
-        if [ ! -f "$control_yaml" ]; then
-            init_control_yaml
-        fi
-        # Adicionar o IP com timestamp atual
-        yq eval ".IPs_testados.\"$ip\" = $current_time" -i "$control_yaml" 2>/dev/null || {
-            echo "Erro ao salvar IP $ip no controle YAML" | tee -a "$tolog"
-        }
-    else
-        echo "yq nao disponivel - controle YAML desabilitado" | tee -a "$tolog"
-        # Fallback: usar arquivo simples
-        echo "$ip:$current_time" >> "$pidfile/ips_testados_fallback.txt"
+    echo "Marcando $ip como testado com sucesso (epoch: $current_time)" | tee -a "$tolog"
+    # Garantir que o arquivo YAML existe e tem estrutura correta
+    if [ ! -f "$control_yaml" ]; then
+        init_control_yaml
     fi
+    # Adicionar o IP com timestamp atual
+    yq eval ".IPs_testados.\"$ip\" = $current_time" -i "$control_yaml" 2>/dev/null || {
+        echo "Erro ao salvar IP $ip no controle YAML" | tee -a "$tolog"
+    }
 }
 
 # DESCOBERTA DE HOSTS ONLINE - METODO SIMPLES E EFICAZ
@@ -612,12 +563,13 @@ init() {
     # PASSO 3: FILTRAR HOSTS TESTADOS RECENTEMENTE
     echo "=== PASSO 3: FILTRANDO HOSTS TESTADOS RECENTEMENTE ===" | tee -a "$tolog"
     true > "$toip1"
+
     while read -r ip; do
         if [ -n "$ip" ] && ! is_recently_tested "$ip"; then
             echo "$ip" >> "$toip1"
             echo "IP $ip elegivel para teste" | tee -a "$tolog"
         elif [ -n "$ip" ]; then
-            echo "IP $ip testado nas ultimas 48h - ignorando" | tee -a "$tolog"
+            echo "O IP $ip sera ignorado neste teste" | tee -a "$tolog"
         fi
     done < "$toip1.tmp"
 
